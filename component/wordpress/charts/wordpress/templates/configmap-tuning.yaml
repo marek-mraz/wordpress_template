@@ -1,0 +1,15 @@
+{{- if or .Values.app.phpIni .Values.app.apacheConf }}
+# PHP/Apache tuning from values (app.phpIni / app.apacheConf), mounted into
+# conf.d / conf-enabled by deployment-wp.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wordpress.fullname" . }}-tuning
+  labels:
+    {{- include "wordpress.labels" . | nindent 4 }}
+data:
+  zz-chart.ini: |
+    {{- .Values.app.phpIni | nindent 4 }}
+  zz-chart.conf: |
+    {{- .Values.app.apacheConf | nindent 4 }}
+{{- end }}

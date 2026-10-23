@@ -1,0 +1,393 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WordPress Helm Chart Values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "environment": {
+          "type": "string"
+        }
+      }
+    },
+    "app": {
+      "type": "object",
+      "required": [
+        "replicaCount",
+        "image",
+        "storage"
+      ],
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "theme": {
+          "type": "string"
+        },
+        "plugins": {
+          "type": "string"
+        },
+        "image": {
+          "type": "object",
+          "required": [
+            "repository",
+            "tag"
+          ],
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          }
+        },
+        "busyboxImage": {
+          "type": "string"
+        },
+        "hostAliases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "ip": {
+                "type": "string"
+              },
+              "hostnames": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "storage": {
+          "type": "string"
+        },
+        "storageClassName": {
+          "type": "string"
+        },
+        "deployStrategy": {
+          "type": "string",
+          "enum": [
+            "Recreate",
+            "RollingUpdate"
+          ]
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "securityContext": {
+          "type": "object"
+        },
+        "phpIni": {
+          "type": "string"
+        },
+        "apacheConf": {
+          "type": "string"
+        }
+      }
+    },
+    "wordpress": {
+      "type": "object",
+      "properties": {
+        "siteTitle": {
+          "type": "string"
+        },
+        "tagline": {
+          "type": "string"
+        },
+        "siteUrl": {
+          "type": "string"
+        },
+        "homeUrl": {
+          "type": "string"
+        },
+        "adminUser": {
+          "type": "string"
+        },
+        "adminEmail": {
+          "type": "string"
+        },
+        "usersCanRegister": {},
+        "defaultRole": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "timezoneString": {
+          "type": "string"
+        },
+        "dateFormat": {
+          "type": "string"
+        },
+        "timeFormat": {
+          "type": "string"
+        },
+        "startOfWeek": {},
+        "permalinkStructure": {
+          "type": "string"
+        }
+      }
+    },
+    "oauth": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "endpointLogin": {
+          "type": "string",
+          "format": "uri"
+        },
+        "endpointUserInfo": {
+          "type": "string",
+          "format": "uri"
+        },
+        "endpointToken": {
+          "type": "string",
+          "format": "uri"
+        },
+        "endpointLogout": {
+          "type": "string",
+          "format": "uri"
+        },
+        "jwksUri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "issuer": {
+          "type": "string"
+        },
+        "identityKey": {
+          "type": "string"
+        },
+        "nicknameKey": {
+          "type": "string"
+        },
+        "emailFormat": {
+          "type": "string"
+        },
+        "displayNameFormat": {
+          "type": "string"
+        },
+        "linkExistingUsers": {
+          "type": "string"
+        },
+        "createIfNotExists": {
+          "type": "string"
+        },
+        "redirectBack": {
+          "type": "string"
+        },
+        "identifyWithUsername": {
+          "type": "string"
+        },
+        "enableRefreshToken": {
+          "type": "string"
+        },
+        "enforcePrivacy": {
+          "type": "string"
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "existingSecretKey": {
+          "type": "string"
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
+            }
+          }
+        },
+        "storage": {
+          "type": "string"
+        },
+        "storageClassName": {
+          "type": "string"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "host": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "timeZone": {
+          "type": "string"
+        },
+        "ttl": {
+          "type": "string"
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "required": [
+        "host"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": "string"
+        },
+        "tlsSecretName": {
+          "type": "string"
+        },
+        "className": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "targetMemoryUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minAvailable": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "ingressNamespace": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "resources": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": {
+              "type": "string"
+            },
+            "memory": {
+              "type": "string"
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": {
+              "type": "string"
+            },
+            "memory": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,69 @@
+{{- range $id, $instance := .Values.global.instances }}
+{{- if eq $instance.component "wordpress" }}
+wordpress-{{ $id }}-allow-linkerd:
+  namespace: {{ $.Values.global.instanceSlug }}-{{ $id }}
+  podSelector:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/component: web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+wordpress-{{ $id }}-db-linkerd:
+  componentNamespace: mariadb.instances
+  podSelector:
+    app.kubernetes.io/name: mariadb
+    app.kubernetes.io/instance: mariadb-shared
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wordpress
+              app.kubernetes.io/component: web
+          componentNamespace: wordpress-{{ $id }}
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+{{- end }}
+{{- end }}{{- /* Linkerd proxy ports for the wordpress -> keycloak back-channel. */}}
+{{- range $id, $instance := .Values.global.instances }}
+{{- if eq $instance.component "wordpress" }}
+wordpress-{{ $id }}-kc-linkerd:
+  componentNamespace: keycloak.app
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wordpress
+              app.kubernetes.io/component: web
+          componentNamespace: wordpress-{{ $id }}
+      ports:
+        - port: 4143
+          protocol: TCP
+        - port: 4190
+          protocol: TCP
+        - port: 4191
+          protocol: TCP
+{{- end }}
+{{- end }}

@@ -1,0 +1,155 @@
+global:
+  # Target environment, used for labels only
+  environment: production
+
+app:
+  replicaCount: 1
+  # Theme / space-separated plugins to activate (installed from wordpress.org if
+  # the image does not ship them) on every start, via WP-CLI.
+  theme: ""
+  plugins: "redirection lightbox-photoswipe"
+  image:
+    # The image built from this repository's Dockerfile.
+    repository: ghcr.io/marek-mraz/wordpress_template
+    # Required. Pin a digest in production: "<tag>@sha256:<digest>".
+    tag: ""
+    pullPolicy: IfNotPresent
+  # busybox for the wait-for-mariadb initContainer and the helm test
+  busyboxImage: "busybox:1.37"
+  # Extra /etc/hosts entries (e.g. hairpin NAT: the site's own domain -> ingress ClusterIP)
+  hostAliases: []
+  # PVC for /var/www/html (core, plugins, uploads)
+  storage: 5Gi
+  # Empty = cluster default StorageClass
+  storageClassName: ""
+  # Recreate: one ReadWriteOncePod volume cannot attach to two pods during a rollout
+  deployStrategy: Recreate
+  # Container securityContext. The pod runs as www-data (uid 33): Apache listens
+  # on 8080 and needs no capabilities; /tmp is an emptyDir.
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  # Tuning hooks (empty = image defaults). phpIni is mounted as
+  # /usr/local/etc/php/conf.d/zz-chart.ini, apacheConf as
+  # /etc/apache2/conf-enabled/zz-chart.conf; both load last and win.
+  phpIni: ""
+  apacheConf: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 224Mi
+    limits:
+      # PHP renders are single-threaded CPU bursts; a lower limit throttles them.
+      cpu: "1"
+      # Holds 10 Apache workers (APACHE_MAX_REQUEST_WORKERS) with headroom.
+      memory: 512Mi
+
+# Enforced on every start (empty values are left alone).
+wordpress:
+  siteTitle: "My WordPress"
+  tagline: ""
+  # Canonical URLs; default https://<ingress.host>
+  siteUrl: ""
+  homeUrl: ""
+  adminUser: "admin"
+  adminEmail: "admin@example.com"
+  usersCanRegister: 0
+  defaultRole: "subscriber"
+  # e.g. de_DE, sk_SK; empty keeps English
+  language: ""
+  timezoneString: "UTC"
+  dateFormat: "Y-m-d"
+  timeFormat: "H:i"
+  startOfWeek: 1
+  permalinkStructure: "/%postname%/"
+
+# OIDC login (Keycloak or any OpenID Connect provider). When enabled, local
+# password login is off; users need a client role (admin, editor, author,
+# contributor or subscriber) of clientId to log in.
+oauth:
+  enabled: false
+  clientId: "wordpress"
+  # Secret holding the client secret; default <fullname>-credentials
+  existingSecret: ""
+  existingSecretKey: "oauth-client-secret"
+  scope: "email profile openid offline_access"
+  # Browser-facing endpoints (issuer host)
+  endpointLogin: "https://auth.example.com/realms/example/protocol/openid-connect/auth"
+  endpointLogout: "https://auth.example.com/realms/example/protocol/openid-connect/logout"
+  issuer: "https://auth.example.com/realms/example"
+  # Server-to-server endpoints; may point at an in-cluster Keycloak service
+  endpointUserInfo: "https://auth.example.com/realms/example/protocol/openid-connect/userinfo"
+  endpointToken: "https://auth.example.com/realms/example/protocol/openid-connect/token"
+  jwksUri: "https://auth.example.com/realms/example/protocol/openid-connect/certs"
+  identityKey: "preferred_username"
+  nicknameKey: "preferred_username"
+  emailFormat: "{email}"
+  displayNameFormat: "{given_name} {family_name}"
+  linkExistingUsers: "true"
+  createIfNotExists: "true"
+  redirectBack: "true"
+  identifyWithUsername: "false"
+  enableRefreshToken: "true"
+  enforcePrivacy: "false"
+
+database:
+  # true: bundled MariaDB StatefulSet. false: external server (host/user/name below).
+  enabled: true
+  # External database coordinates (database.enabled=false)
+  host: ""
+  user: ""
+  name: ""
+  replicaCount: 1
+  image:
+    repository: mariadb
+    tag: "11.8"
+    pullPolicy: IfNotPresent
+  storage: 10Gi
+  storageClassName: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# Velero Schedule for this release (needs Velero with node-agent file-system backup).
+# MariaDB writes a consistent dump into its volume before each backup.
+backup:
+  enabled: false
+  schedule: "0 3 * * *"
+  timeZone: "UTC"
+  ttl: 720h
+
+ingress:
+  enabled: true
+  # e.g. nginx, traefik; empty = cluster default IngressClass
+  className: ""
+  host: wordpress.example.com
+  # e.g. cert-manager.io/cluster-issuer: letsencrypt-prod
+  annotations: {}
+  # TLS secret for host (cert-manager fills it when annotated); empty = no TLS block
+  tlsSecretName: ""
+
+podDisruptionBudget:
+  # Keep false with one replica: minAvailable 1 would block node drains.
+  enabled: false
+  minAvailable: 1
+
+# Scaling out needs a ReadWriteMany volume and deployStrategy RollingUpdate.
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+networkPolicy:
+  # Needs a CNI that enforces NetworkPolicy (Calico, Cilium, k3s' built-in, ...)
+  enabled: true
+  # Namespace of the ingress controller; empty = any namespace may reach :8080
+  ingressNamespace: ""

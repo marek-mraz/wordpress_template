@@ -1,0 +1,59 @@
+{{- range $id, $instance := .Values.global.instances }}
+{{- if eq $instance.component "wordpress" }}
+{{ $id }}:
+  name: {{ $id }}
+  description: WordPress instance {{ $id }}
+  componentNamespaces:
+    - wordpress-{{ $id }}
+  # Login gate: only users holding the CLIENT role {{ $id }}.access may log in;
+  # plain realm membership (or realm roles) is not enough.
+  requireClientRole: access
+  roles:
+    - name: access
+      description: May log in to WordPress instance {{ $id }}
+    # WordPress role tiers (consumed by the WP OIDC plugin's role mapping).
+    # Each is a composite including "access", so assigning one tier is enough
+    # to log in — no separate "access" grant needed.
+    {{- range list "admin" "editor" "author" "contributor" "subscriber" }}
+    - name: {{ . }}
+      description: WordPress {{ . }} role for instance {{ $id }}
+      composite: true
+      composites:
+        client:
+          {{ $id }}:
+            - access
+    {{- end }}
+  rawValues:
+    publicClient: false
+    standardFlowEnabled: true
+    # WordPress uses the browser auth-code flow only; the password grant would
+    # just be a brute-force channel that skips the login page.
+    directAccessGrantsEnabled: false
+    # The image sends PKCE (mu-plugins/oidc-pkce.php); require it.
+    attributes:
+      pkce.code.challenge.method: S256
+    rootUrl: "https://{{ index $instance.domains 0 }}"
+    baseUrl: "https://{{ index $instance.domains 0 }}"
+    redirectUris:
+    {{- range $domain := $instance.domains }}
+      - "https://{{ $domain }}/*"
+    {{- end }}
+    # The WP OIDC plugin only sees ID-token/userinfo claims, but Keycloak's
+    # default "roles" scope puts resource_access into the ACCESS token only —
+    # without this mapper every login dies on the mu-plugin role gate.
+    # Restricted to this client's own roles (no cross-app role bleed).
+    protocolMappers:
+      - name: own-client-roles-in-id-token
+        protocol: openid-connect
+        protocolMapper: oidc-usermodel-client-role-mapper
+        consentRequired: false
+        config:
+          usermodel.clientRoleMapping.clientId: {{ $id }}
+          claim.name: resource_access.${client_id}.roles
+          jsonType.label: String
+          multivalued: "true"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+{{- end }}
+{{- end }}

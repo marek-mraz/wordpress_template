@@ -1,0 +1,21 @@
+{{- if .Values.backup.enabled }}
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: {{ include "wordpress.fullname" . }}
+  labels:
+    {{- include "wordpress.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  {{- if .Values.backup.timeZone }}
+  timezone: {{ .Values.backup.timeZone | quote }}
+  {{- end }}
+  template:
+    includedNamespaces:
+      - {{ .Release.Namespace }}
+    labelSelector:
+      matchLabels:
+        {{- include "wordpress.selectorLabels" . | nindent 8 }}
+    ttl: {{ .Values.backup.ttl | default "720h" }}
+    includeClusterResources: false
+{{- end }}

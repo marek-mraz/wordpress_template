@@ -1,0 +1,21 @@
+{{- if .Values.database.enabled }}
+# Headless service for MariaDB StatefulSet — provides stable per-pod DNS.
+# Required by Kubernetes: StatefulSet.spec.serviceName must reference a headless service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wordpress.fullname" . }}-mariadb-headless
+  labels:
+    {{- include "wordpress.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: 3306
+      targetPort: 3306
+      name: mysql
+  selector:
+    {{- include "wordpress.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+{{- end }}

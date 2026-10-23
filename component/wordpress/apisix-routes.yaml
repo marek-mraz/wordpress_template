@@ -1,0 +1,49 @@
+{{- /* Primary domain (domains[0]) proxies to WordPress; every other listed
+       domain 301-redirects to the primary (e.g. bare domain → www.). */}}
+{{- range $id, $instance := .Values.global.instances }}
+{{- if eq $instance.component "wordpress" }}
+{{- $primary := index $instance.domains 0 }}
+{{- range $i, $domain := $instance.domains }}
+wordpress-{{ $id }}-{{ $i }}:
+  name: wordpress-{{ $id }}-{{ $i }}
+{{- if eq $i 0 }}
+  description: WordPress instance {{ $id }} ({{ $domain }})
+  upstream: wordpress-{{ $id }}-web.{{ $.Values.global.instanceSlug }}-{{ $id }}.svc.cluster.local:8080
+  # Media uploads and wp-admin saves can take well over 6 s.
+  timeout: 30
+{{- else }}
+  description: WordPress instance {{ $id }} redirect {{ $domain }} -> {{ $primary }}
+  redirectTo: https://{{ $primary }}
+{{- end }}
+  externalHost: {{ $domain }}
+  uri: '/*'
+{{- end }}
+  {{- /* Higher-priority login route on the canonical host so the limit-req
+         plugin (see apisix-plugins.yaml) throttles brute force without
+         rate-limiting normal page/asset loads on /*. */}}
+wordpress-{{ $id }}-login:
+  name: wordpress-{{ $id }}-login
+  description: WordPress instance {{ $id }} login (rate-limited)
+  upstream: wordpress-{{ $id }}-web.{{ $.Values.global.instanceSlug }}-{{ $id }}.svc.cluster.local:8080
+  externalHost: {{ $primary }}
+  uri: '/wp-login.php'
+  priority: 10
+  {{- /* xmlrpc + MCP get higher-priority routes so their plugins
+         (403 / IP-allowlist — see apisix-plugins.yaml) run instead of
+         the catch-all proxy. */}}
+wordpress-{{ $id }}-xmlrpc:
+  name: wordpress-{{ $id }}-xmlrpc
+  description: WordPress instance {{ $id }} xmlrpc (blocked)
+  upstream: wordpress-{{ $id }}-web.{{ $.Values.global.instanceSlug }}-{{ $id }}.svc.cluster.local:8080
+  externalHost: {{ $primary }}
+  uri: '/xmlrpc.php'
+  priority: 10
+wordpress-{{ $id }}-mcp:
+  name: wordpress-{{ $id }}-mcp
+  description: WordPress instance {{ $id }} MCP endpoint (IP-allowlisted)
+  upstream: wordpress-{{ $id }}-web.{{ $.Values.global.instanceSlug }}-{{ $id }}.svc.cluster.local:8080
+  externalHost: {{ $primary }}
+  uri: '/wp-json/mcp/*'
+  priority: 10
+{{- end }}
+{{- end }}

@@ -1,0 +1,22 @@
+---
+# Platform defaults for every wordpress instance. Anything here can be
+# overridden per instance via global.instances.<id>.values.
+
+# The database is a tenant on the shared mariadb-operator server (mariadb
+# component, see mariadb.yaml); the chart's bundled MariaDB stays off.
+database:
+  enabled: false
+
+# Credentials come ONLY from the secrets component (<release>-credentials,
+# keycloak-client-<id>); the chart renders no secrets.
+
+# Routing is done by the platform (APISIX routes); network policies come from
+# the networkpolicies component (networkpolicies*.yaml here).
+ingress:
+  enabled: false
+networkPolicy:
+  enabled: false
+
+# Velero backs up the whole cluster on the platform; no per-release Schedule.
+backup:
+  enabled: false

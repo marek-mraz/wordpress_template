@@ -1,0 +1,16 @@
+{{- /* One TENANT (database + least-privilege user) on the shared MariaDB server
+       per wordpress instance. Same logic as databases.yaml: declared here,
+       aggregated into .Values.mariadbInstances, rendered as Database/User/Grant
+       CRs by the mariadb component's instances chart. The wordpress release is
+       pointed at the shared server + these credentials by its helmfile. */}}
+{{- range $id, $instance := .Values.global.instances }}
+{{- if eq $instance.component "wordpress" }}
+wordpress-{{ $id }}:
+  namespace: {{ $.Values.global.instanceSlug }}-{{ $id }}
+  database: wordpress_{{ $id | replace "-" "_" }}
+  user: wordpress_{{ $id | replace "-" "_" }}
+  passwordSecret:
+    name: wordpress-{{ $id }}-credentials
+    key: mariadb-password
+{{- end }}
+{{- end }}

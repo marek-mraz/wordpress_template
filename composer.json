@@ -1,0 +1,23 @@
+{
+    "name": "multi-tenant/wordpress",
+    "description": "WordPress with Composer",
+    "repositories": [
+        {
+            "type": "composer",
+            "url": "https://wpackagist.org",
+            "only": ["wpackagist-plugin/*", "wpackagist-theme/*"]
+        }
+    ],
+    "require": {
+        "composer/installers": "2.3.0",
+        "wpackagist-plugin/cache-enabler": "1.8.17",
+        "wpackagist-plugin/daggerhart-openid-connect-generic": "3.11.3",
+        "wpackagist-plugin/lightbox-photoswipe": "5.13.0",
+        "wpackagist-plugin/redirection": "5.10.1"
+    },
+    "config": {
+        "allow-plugins": {
+            "composer/installers": true
+        }
+    }
+}

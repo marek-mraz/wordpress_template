@@ -1,0 +1,7 @@
+{{- range $id, $instance := .Values.global.instances }}
+{{- if eq $instance.component "wordpress" }}
+wordpress-{{ $id }}:
+  app:
+    namespace: {{ $.Values.global.instanceSlug }}-{{ $id }}
+{{- end }}
+{{- end }}

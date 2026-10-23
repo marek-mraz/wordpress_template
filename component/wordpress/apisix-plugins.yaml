@@ -1,0 +1,80 @@
+{{- /* Rate-limit the wordpress-<id>-login routes: this guards the LOCAL WP
+       admin form (wp-login.php), which does not go through Keycloak and has no
+       native lockout. Realm/OIDC logins are already protected by Keycloak's
+       per-account brute-force lockout.
+       real-ip recovers the client from X-Forwarded-For (the edge proxy must
+       pass it on), so the cap is per client IP. trusted_addresses below are the
+       k3s default pod/service CIDRs; change them for other clusters. Numbers are loose enough
+       that legit humans are never blocked but automated credential-stuffing
+       (100s/min) is. */}}
+{{- /* Security headers for HTML responses (no CSP: plugins/themes inline
+       scripts; X-Frame-Options covers clickjacking). X-Powered-By is dropped. */}}
+{{- $secHeaders := `response-rewrite:
+  headers:
+    set:
+      strict-transport-security: max-age=31536000
+      x-content-type-options: nosniff
+      x-frame-options: SAMEORIGIN
+      referrer-policy: strict-origin-when-cross-origin
+    remove:
+      - x-powered-by` }}
+{{- range $id, $instance := .Values.global.instances }}
+{{- if eq $instance.component "wordpress" }}
+{{- /* Canonical-host catch-all route (wordpress-<id>-0 in apisix-routes.yaml). */}}
+wordpress-{{ $id }}-0:
+  name: wordpress-{{ $id }}-0
+  description: Security headers and request body cap for {{ $id }}
+  plugins:
+    {{- $secHeaders | nindent 4 }}
+    client-control:
+      max_body_size: 67108864
+wordpress-{{ $id }}-login:
+  name: wordpress-{{ $id }}-login
+  description: Rate limit WordPress login for {{ $id }}
+  plugins:
+    {{- $secHeaders | nindent 4 }}
+    client-control:
+      max_body_size: 1048576
+    real-ip:
+      source: http_x_forwarded_for
+      trusted_addresses: ["10.42.0.0/16", "10.43.0.0/16", "127.0.0.0/8"]
+      recursive: true
+    limit-req:
+      rate: 5
+      burst: 30
+      key_type: var
+      key: remote_addr
+      rejected_code: 429
+wordpress-{{ $id }}-xmlrpc:
+  name: wordpress-{{ $id }}-xmlrpc
+  description: Block xmlrpc.php for {{ $id }}
+  plugins:
+    fault-injection:
+      abort:
+        http_status: 403
+        body: forbidden
+{{- /* MCP endpoint: allowlist per-instance mcpAllowlist IPs/CIDRs; no list
+       configured -> hard 403. remote_addr here is the Traefik hop, so real-ip
+       recovers the client from X-Forwarded-For (rightmost untrusted entry;
+       10.42/10.43 are the k3s pod/service CIDRs Traefik+Linkerd hop through). */}}
+wordpress-{{ $id }}-mcp:
+  name: wordpress-{{ $id }}-mcp
+  description: MCP endpoint access control for {{ $id }}
+  plugins:
+{{- $mcpAllow := list }}{{- if hasKey $instance "mcpAllowlist" }}{{- $mcpAllow = $instance.mcpAllowlist }}{{- end }}
+{{- if $mcpAllow }}
+    real-ip:
+      source: http_x_forwarded_for
+      trusted_addresses: ["10.42.0.0/16", "10.43.0.0/16", "127.0.0.0/8"]
+      recursive: true
+    ip-restriction:
+      whitelist: {{ $mcpAllow | toJson }}
+      rejected_code: 403
+{{- else }}
+    fault-injection:
+      abort:
+        http_status: 403
+        body: forbidden
+{{- end }}
+{{- end }}
+{{- end }}

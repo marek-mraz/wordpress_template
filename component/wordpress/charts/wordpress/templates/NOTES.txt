@@ -1,0 +1,11 @@
+WordPress is starting; setup progress:
+  kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "wordpress.fullname" . }}-web
+
+  Site:   {{ .Values.wordpress.siteUrl | default (printf "https://%s" .Values.ingress.host) }}
+  Admin:  {{ .Values.wordpress.siteUrl | default (printf "https://%s" .Values.ingress.host) }}/wp-admin
+{{- if .Values.oauth.enabled }}
+  Login:  through OIDC ({{ .Values.oauth.issuer }}); local password login is off.
+{{- else }}
+  Login:  user "{{ .Values.wordpress.adminUser }}", password = key wordpress-password of
+          secret {{ include "wordpress.fullname" . }}-credentials
+{{- end }}

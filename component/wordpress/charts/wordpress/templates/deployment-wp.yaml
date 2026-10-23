@@ -1,0 +1,396 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wordpress.fullname" . }}-web
+  labels:
+    {{- include "wordpress.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.app.replicaCount }}
+  strategy:
+    type: {{ .Values.app.deployStrategy }}
+  selector:
+    matchLabels:
+      {{- include "wordpress.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "wordpress.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+      annotations:
+        backup.velero.io/backup-volumes: wordpress-data
+        {{- if or .Values.app.phpIni .Values.app.apacheConf }}
+        checksum/tuning: {{ include (print $.Template.BasePath "/configmap-tuning.yaml") . | sha256sum }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "wordpress.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      affinity:
+        podAntiAffinity:
+          # Prefer spreading replicas across nodes — soft rule so scheduling isn't blocked
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "wordpress.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: web
+                topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if .Values.app.hostAliases }}
+      hostAliases:
+        {{- toYaml .Values.app.hostAliases | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-mariadb
+          image: {{ .Values.app.busyboxImage }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z -w 2 {{ .Values.database.host | default (printf "%s-mariadb" (include "wordpress.fullname" .)) }} 3306; do
+                echo "Waiting for MariaDB at {{ .Values.database.host | default (printf "%s-mariadb" (include "wordpress.fullname" .)) }}:3306..."
+                sleep 2
+              done
+              echo "MariaDB is ready."
+      containers:
+        - name: wordpress
+          image: "{{ .Values.app.image.repository }}:{{ required "app.image.tag is required (pin a digest: <tag>@sha256:...)" .Values.app.image.tag }}"
+          imagePullPolicy: {{ .Values.app.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.app.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # Unprivileged port: Apache runs as www-data (uid 33), no root master.
+            - name: APACHE_PORT
+              value: "8080"
+            - name: WORDPRESS_DB_HOST
+              value: {{ .Values.database.host | default (printf "%s-mariadb" (include "wordpress.fullname" .)) }}
+            - name: WORDPRESS_DB_USER
+              value: {{ .Values.database.user | default "wordpress" }}
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wordpress.fullname" . }}-credentials
+                  key: mariadb-password
+            - name: WORDPRESS_DB_NAME
+              value: {{ .Values.database.name | default "wordpress" }}
+            - name: WORDPRESS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wordpress.fullname" . }}-credentials
+                  key: wordpress-password
+            - name: WP_THEME
+              value: {{ .Values.app.theme | default "" | quote }}
+            - name: WP_PLUGINS
+              value: {{ .Values.app.plugins | default "" | quote }}
+            - name: WP_URL
+              value: {{ if .Values.wordpress.siteUrl }}{{ .Values.wordpress.siteUrl | quote }}{{ else }}"https://{{ .Values.ingress.host }}"{{ end }}
+            - name: WP_HOME
+              value: {{ if .Values.wordpress.homeUrl }}{{ .Values.wordpress.homeUrl | quote }}{{ else }}"https://{{ .Values.ingress.host }}"{{ end }}
+            - name: WP_TITLE
+              value: {{ .Values.wordpress.siteTitle | quote }}
+            - name: WP_TAGLINE
+              value: {{ .Values.wordpress.tagline | default "" | quote }}
+            - name: WP_ADMIN_USER
+              value: {{ .Values.wordpress.adminUser | quote }}
+            - name: WP_ADMIN_EMAIL
+              value: {{ .Values.wordpress.adminEmail | quote }}
+            - name: WP_LANGUAGE
+              value: {{ .Values.wordpress.language | quote }}
+            - name: WP_TIMEZONE_STRING
+              value: {{ .Values.wordpress.timezoneString | default "" | quote }}
+            - name: WP_DATE_FORMAT
+              value: {{ .Values.wordpress.dateFormat | default "" | quote }}
+            - name: WP_TIME_FORMAT
+              value: {{ .Values.wordpress.timeFormat | default "" | quote }}
+            - name: WP_START_OF_WEEK
+              value: {{ if hasKey .Values.wordpress "startOfWeek" }}{{ .Values.wordpress.startOfWeek | quote }}{{ else }}""{{ end }}
+            - name: WP_USERS_CAN_REGISTER
+              value: {{ if hasKey .Values.wordpress "usersCanRegister" }}{{ .Values.wordpress.usersCanRegister | quote }}{{ else }}""{{ end }}
+            - name: WP_DEFAULT_ROLE
+              value: {{ .Values.wordpress.defaultRole | default "" | quote }}
+            - name: WP_PERMALINK_STRUCTURE
+              value: {{ .Values.wordpress.permalinkStructure | default "" | quote }}
+            {{- if .Values.oauth.enabled }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.oauth.clientId | quote }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oauth.existingSecret | default (printf "%s-credentials" (include "wordpress.fullname" .)) }}
+                  key: {{ .Values.oauth.existingSecretKey | default "oauth-client-secret" }}
+            - name: OIDC_SCOPE
+              value: {{ .Values.oauth.scope | quote }}
+            - name: OIDC_ENDPOINT_LOGIN
+              value: {{ .Values.oauth.endpointLogin | quote }}
+            - name: OIDC_ENDPOINT_USERINFO
+              value: {{ .Values.oauth.endpointUserInfo | quote }}
+            - name: OIDC_ENDPOINT_TOKEN
+              value: {{ .Values.oauth.endpointToken | quote }}
+            - name: OIDC_ENDPOINT_LOGOUT
+              value: {{ .Values.oauth.endpointLogout | quote }}
+            {{- if .Values.oauth.jwksUri }}
+            - name: OIDC_JWKS_URI
+              value: {{ .Values.oauth.jwksUri | quote }}
+            {{- end }}
+            {{- if .Values.oauth.issuer }}
+            - name: OIDC_ISSUER
+              value: {{ .Values.oauth.issuer | quote }}
+            {{- end }}
+            - name: OIDC_IDENTITY_KEY
+              value: {{ .Values.oauth.identityKey | quote }}
+            - name: OIDC_NICKNAME_KEY
+              value: {{ .Values.oauth.nicknameKey | quote }}
+            - name: OIDC_EMAIL_FORMAT
+              value: {{ .Values.oauth.emailFormat | quote }}
+            - name: OIDC_DISPLAYNAME_FORMAT
+              value: {{ .Values.oauth.displayNameFormat | quote }}
+            - name: OIDC_LINK_EXISTING_USERS
+              value: {{ .Values.oauth.linkExistingUsers | quote }}
+            - name: OIDC_CREATE_IF_NOT_EXISTS
+              value: {{ .Values.oauth.createIfNotExists | quote }}
+            - name: OIDC_REDIRECT_BACK
+              value: {{ .Values.oauth.redirectBack | quote }}
+            - name: OIDC_IDENTIFY_WITH_USERNAME
+              value: {{ .Values.oauth.identifyWithUsername | quote }}
+            - name: OIDC_ENABLE_REFRESH_TOKEN
+              value: {{ .Values.oauth.enableRefreshToken | quote }}
+            - name: OIDC_ENFORCE_PRIVACY
+              value: {{ .Values.oauth.enforcePrivacy | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: wordpress-data
+              mountPath: /var/www/html
+            # Writable scratch on a read-only root filesystem: Apache run/lock
+            # dirs, PHP sessions/uploads, WP-CLI cache, the postStart script.
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.app.phpIni }}
+            - name: tuning
+              mountPath: /usr/local/etc/php/conf.d/zz-chart.ini
+              subPath: zz-chart.ini
+              readOnly: true
+            {{- end }}
+            {{- if .Values.app.apacheConf }}
+            - name: tuning
+              mountPath: /etc/apache2/conf-enabled/zz-chart.conf
+              subPath: zz-chart.conf
+              readOnly: true
+            {{- end }}
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/bash
+                  - -c
+                  - |
+                    cat << 'EOF' > /usr/local/bin/setup-wp.sh
+                    #!/bin/bash
+                    set -euo pipefail
+                    LOG=/var/www/html/setup-wp.log
+                    log() {
+                      local msg="[$(date '+%Y-%m-%d %H:%M:%S')] [setup-wp] $*"
+                      echo "$msg" >> "$LOG"
+                      echo "$msg" >> /proc/1/fd/1 2>/dev/null || true
+                    }
+
+                    log "========== setup-wp.sh START =========="
+                    log "Waiting for wp-config.php..."
+                    WAIT=0
+                    while [ ! -f /var/www/html/wp-config.php ]; do
+                      sleep 5
+                      WAIT=$((WAIT+5))
+                      log "  still waiting... ${WAIT}s elapsed"
+                      if [ $WAIT -ge 300 ]; then
+                        log "FATAL: wp-config.php not found after 300s, aborting"
+                        exit 1
+                      fi
+                    done
+                    log "wp-config.php found after ${WAIT}s"
+                    sleep 10
+
+                    log "wp-cli: $(wp --version --allow-root 2>&1)"
+
+                    log "Checking wp core is-installed..."
+                    if ! wp core is-installed --allow-root --path=/var/www/html >> "$LOG" 2>&1; then
+                      log "WordPress NOT installed, running initial wp core install..."
+                      if wp core install \
+                        --url="$WP_URL" \
+                        --title="$WP_TITLE" \
+                        --admin_user="$WP_ADMIN_USER" \
+                        --admin_password="$WORDPRESS_PASSWORD" \
+                        --admin_email="$WP_ADMIN_EMAIL" \
+                        --skip-email \
+                        --allow-root \
+                        --path=/var/www/html >> "$LOG" 2>&1; then
+                        log "wp core install SUCCESS"
+                      else
+                        log "ERROR: wp core install FAILED (exit code: $?)"
+                      fi
+                    else
+                      log "WordPress already installed, skipping initial wp core install"
+                    fi
+
+                    # =========================================================
+                    # ENFORCE SETTINGS ON EVERY STARTUP
+                    # =========================================================
+                    log "Enforcing settings from environment variables..."
+
+                    # 1. Site Title & Tagline
+                    if [ -n "${WP_TITLE:-}" ]; then
+                      log "Enforcing site title: $WP_TITLE"
+                      wp option update blogname "$WP_TITLE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+                    if [ -n "${WP_TAGLINE:-}" ]; then
+                      log "Enforcing tagline: $WP_TAGLINE"
+                      wp option update blogdescription "$WP_TAGLINE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+
+                    # 2. Site URL
+                    if [ -n "${WP_URL:-}" ]; then
+                      log "Enforcing site URL: $WP_URL"
+                      wp option update siteurl "$WP_URL" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+                    if [ -n "${WP_HOME:-}" ]; then
+                      log "Enforcing home URL: $WP_HOME"
+                      wp option update home "$WP_HOME" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    elif [ -n "${WP_URL:-}" ]; then
+                      wp option update home "$WP_URL" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+
+                    # 3. Admin Email
+                    if [ -n "${WP_ADMIN_EMAIL:-}" ]; then
+                      log "Enforcing admin email: $WP_ADMIN_EMAIL"
+                      wp option update admin_email "$WP_ADMIN_EMAIL" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+
+                    # 3.5. Timezone, Date, Time, Week, Registration
+                    if [ -n "${WP_TIMEZONE_STRING:-}" ]; then
+                      wp option update timezone_string "$WP_TIMEZONE_STRING" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+                    if [ -n "${WP_DATE_FORMAT:-}" ]; then
+                      wp option update date_format "$WP_DATE_FORMAT" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+                    if [ -n "${WP_TIME_FORMAT:-}" ]; then
+                      wp option update time_format "$WP_TIME_FORMAT" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+                    if [ -n "${WP_START_OF_WEEK:-}" ]; then
+                      wp option update start_of_week "$WP_START_OF_WEEK" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+                    if [ -n "${WP_USERS_CAN_REGISTER:-}" ]; then
+                      wp option update users_can_register "$WP_USERS_CAN_REGISTER" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+                    if [ -n "${WP_DEFAULT_ROLE:-}" ]; then
+                      wp option update default_role "$WP_DEFAULT_ROLE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+
+                    # 4. Language
+                    if [ -n "${WP_LANGUAGE:-}" ]; then
+                      log "Enforcing language: $WP_LANGUAGE"
+                      # Ensure language files are downloaded, then switch the site's active language
+                      wp language core install "$WP_LANGUAGE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp site switch-language "$WP_LANGUAGE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: Failed to switch language"
+                    fi
+
+                    log "Syncing custom themes and plugins from image to PVC..."
+                    mkdir -p /var/www/html/wp-content/mu-plugins /var/www/html/wp-content/plugins /var/www/html/wp-content/themes
+                    cp -af /usr/src/wordpress/wp-content/mu-plugins/. /var/www/html/wp-content/mu-plugins/ 2>/dev/null || true
+                    cp -af /usr/src/wordpress/wp-content/plugins/. /var/www/html/wp-content/plugins/ 2>/dev/null || true
+                    cp -af /usr/src/wordpress/wp-content/themes/. /var/www/html/wp-content/themes/ 2>/dev/null || true
+
+                    # 5. Theme
+                    if [ -n "${WP_THEME:-}" ]; then
+                      log "Enforcing theme: $WP_THEME"
+                      # Install if missing, then activate
+                      wp theme is-installed "$WP_THEME" --allow-root --path=/var/www/html || wp theme install "$WP_THEME" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp theme activate "$WP_THEME" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: theme activation failed"
+                    fi
+                    
+                    # 6. Plugins
+                    if [ -n "${WP_PLUGINS:-}" ]; then
+                      for plugin in $WP_PLUGINS; do
+                        log "Enforcing plugin: $plugin"
+                        # Install if missing, then activate
+                        wp plugin is-installed "$plugin" --allow-root --path=/var/www/html || wp plugin install "$plugin" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                        wp plugin activate "$plugin" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: plugin $plugin activation failed"
+                      done
+                    fi
+
+                    # 7. Permalink Structure
+                    if [ -n "${WP_PERMALINK_STRUCTURE:-}" ]; then
+                      log "Enforcing permalink structure: $WP_PERMALINK_STRUCTURE"
+                      wp rewrite structure "$WP_PERMALINK_STRUCTURE" --hard --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    fi
+
+                    # =========================================================
+                    # ACTIVATE CORE PLUGINS & SECURITY POLICIES
+                    # =========================================================
+                    if [ -n "${OIDC_CLIENT_ID:-}" ]; then
+                      log "Activating the OIDC login plugin..."
+                      wp plugin activate daggerhart-openid-connect-generic --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: openid-connect plugin activation failed"
+                    fi
+
+                    log "Disabling file modifications and automatic updates (enforcing GitOps)..."
+                    wp config set DISALLOW_FILE_MODS true --raw --type=constant --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    wp config set DISALLOW_FILE_EDIT true --raw --type=constant --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                    wp config set AUTOMATIC_UPDATER_DISABLED true --raw --type=constant --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+
+                    log "========== setup-wp.sh DONE =========="
+                    EOF
+                    chmod +x /usr/local/bin/setup-wp.sh
+                    nohup /usr/local/bin/setup-wp.sh > /var/www/html/setup-wp.log 2>&1 &
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}
+          {{- /* Probes must NOT hit /wp-login.php: with OIDC login_type=auto every
+                 render writes a state transient (2 wp_options rows) and probes
+                 bloat the DB by ~30k rows/day. rest_route=/ boots PHP+DB with no
+                 side effects and works pre-install (302) and on plain permalinks. */}}
+          startupProbe:
+            httpGet:
+              path: /index.php?rest_route=/
+              port: http
+            failureThreshold: 60
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /index.php?rest_route=/
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: wordpress-data
+          persistentVolumeClaim:
+            claimName: {{ include "wordpress.fullname" . }}-wp-pvc
+        - name: tmp
+          emptyDir: {}
+        {{- if or .Values.app.phpIni .Values.app.apacheConf }}
+        - name: tuning
+          configMap:
+            name: {{ include "wordpress.fullname" . }}-tuning
+        {{- end }}

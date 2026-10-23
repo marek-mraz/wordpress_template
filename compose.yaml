@@ -1,0 +1,47 @@
+# Local run, hardened the way the Helm chart runs it: uid 33, read-only root
+# filesystem, no capabilities, port 8080. Start: cp .env.example .env; docker compose up --build
+services:
+  db:
+    image: mariadb:11.8
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    volumes:
+      - db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 30
+
+  wordpress:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    user: "33:33"
+    read_only: true
+    tmpfs:
+      - /tmp:exec,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    env_file: .env
+    environment:
+      APACHE_PORT: 8080
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD}
+      WORDPRESS_DB_NAME: wordpress
+      # Pick up code edits without a restart
+      PHP_OPCACHE_VALIDATE_TIMESTAMPS: 1
+    volumes:
+      - wp:/var/www/html
+      # Theme development: edit in place
+      # - ./wp-content/themes/mytheme:/var/www/html/wp-content/themes/mytheme
+
+volumes:
+  db:
+  wp:

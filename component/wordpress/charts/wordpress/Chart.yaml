@@ -1,0 +1,14 @@
+apiVersion: v2
+name: wordpress
+description: Hardened WordPress (non-root, read-only root filesystem) with optional OIDC login, bundled or external MariaDB.
+type: application
+version: 2.0.0
+appVersion: "7.1.3"
+keywords:
+  - wordpress
+  - cms
+  - oidc
+  - keycloak
+home: https://github.com/marek-mraz/wordpress_template
+sources:
+  - https://github.com/marek-mraz/wordpress_template

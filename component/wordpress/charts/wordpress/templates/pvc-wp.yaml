@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "wordpress.fullname" . }}-wp-pvc
+  labels:
+    {{- include "wordpress.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  accessModes:
+    - ReadWriteOncePod
+  {{- if .Values.app.storageClassName }}
+  storageClassName: {{ .Values.app.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.app.storage }}

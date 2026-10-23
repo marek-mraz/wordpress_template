@@ -1,0 +1,112 @@
+{{- /* The wordpress chart labels BOTH pods app.kubernetes.io/name=wordpress and
+       distinguishes them by app.kubernetes.io/component: web | database. */}}
+{{- range $id, $instance := .Values.global.instances }}
+{{- if eq $instance.component "wordpress" }}
+wordpress-{{ $id }}:
+  namespace: {{ $.Values.global.instanceSlug }}-{{ $id }}
+  podSelector:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/component: web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: apisix
+{{- /* Egress allowlist: DNS, Linkerd control plane, shared MariaDB, Keycloak
+       back-channel, the edge (wp-cron/loopback requests to the site's own
+       public URL hairpin via svclb -> traefik) and the public internet
+       (wordpress.org language packs/plugins, oEmbed). Everything else
+       cluster-internal (apiserver, etcd, APISIX admin, other tenants,
+       cloud metadata) is denied. No port lists: meshed peers are reached on
+       the Linkerd inbound port, not the service port. */}}
+wordpress-{{ $id }}-egress:
+  namespace: {{ $.Values.global.instanceSlug }}-{{ $id }}
+  podSelector:
+    app.kubernetes.io/name: wordpress
+    app.kubernetes.io/component: web
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: linkerd
+        - componentNamespace: mariadb.instances
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: mariadb-shared
+        - componentNamespace: keycloak.app
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keycloak-app
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              svccontroller.k3s.cattle.io/svcname: traefik
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+wordpress-{{ $id }}-db-access:
+  # Shared multi-tenant MariaDB server (mariadb component) — same
+  # consumer-declares-access pattern as the *-postgres-access policies.
+  componentNamespace: mariadb.instances
+  podSelector:
+    app.kubernetes.io/name: mariadb
+    app.kubernetes.io/instance: mariadb-shared
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wordpress
+              app.kubernetes.io/component: web
+          componentNamespace: wordpress-{{ $id }}
+{{- end }}
+{{- end }}
+{{- /* WordPress back-channel OIDC (token/userinfo/JWKS) talks to keycloak via the
+       internal service — allow web pods into the keycloak pods. */}}
+{{- range $id, $instance := .Values.global.instances }}
+{{- if eq $instance.component "wordpress" }}
+wordpress-{{ $id }}-kc-access:
+  componentNamespace: keycloak.app
+  podSelector:
+    app.kubernetes.io/instance: keycloak-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wordpress
+              app.kubernetes.io/component: web
+          componentNamespace: wordpress-{{ $id }}
+{{- end }}
+{{- end }}

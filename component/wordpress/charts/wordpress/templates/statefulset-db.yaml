@@ -1,0 +1,126 @@
+{{- if .Values.database.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "wordpress.fullname" . }}-mariadb
+  labels:
+    {{- include "wordpress.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  serviceName: {{ include "wordpress.fullname" . }}-mariadb-headless
+  replicas: {{ .Values.database.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "wordpress.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        {{- include "wordpress.labels" . | nindent 8 }}
+        app.kubernetes.io/component: database
+      annotations:
+        # Velero File System Backup Opt-In
+        backup.velero.io/backup-volumes: mariadb-data
+        # Application-consistent pre-backup hook: write a consistent dump INTO the
+        # backed-up volume, so every backup carries a clean restore artifact even
+        # though the live datadir copy is only crash-consistent.
+        # --single-transaction takes an InnoDB snapshot: no locks, no downtime.
+        # NOTE: a FLUSH TABLES WITH READ LOCK hook would NOT work here — the lock
+        # is released as soon as the hook's client session exits, before Velero
+        # copies anything. A plain file in the datadir is ignored by MariaDB
+        # (only subdirectories are treated as databases); tmp+mv keeps the last
+        # good dump intact if a dump fails halfway.
+        pre.hook.backup.velero.io/container: mariadb
+        pre.hook.backup.velero.io/command: '["/bin/sh", "-c", "MYSQL_PWD=$MARIADB_ROOT_PASSWORD mariadb-dump -u root --single-transaction --routines --triggers --events --all-databases > /var/lib/mysql/velero-dump.sql.tmp && mv /var/lib/mysql/velero-dump.sql.tmp /var/lib/mysql/velero-dump.sql"]'
+        pre.hook.backup.velero.io/timeout: 5m
+        pre.hook.backup.velero.io/on-error: Fail
+    spec:
+      serviceAccountName: {{ include "wordpress.dbServiceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mariadb
+          image: "{{ .Values.database.image.repository }}:{{ .Values.database.image.tag }}"
+          imagePullPolicy: {{ .Values.database.image.pullPolicy }}
+          args:
+            - --innodb-buffer-pool-size=64M
+            - --performance-schema=OFF
+          securityContext:
+            # MariaDB image initialises as root then drops to mysql (UID 999) via gosu;
+            # runAsNonRoot is not set for compatibility with the official image init sequence.
+            # CHOWN/SETUID/SETGID/DAC_OVERRIDE are required for the entrypoint chown+gosu sequence.
+            allowPrivilegeEscalation: true
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - SETUID
+                - SETGID
+                - DAC_OVERRIDE
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wordpress.fullname" . }}-credentials
+                  key: mariadb-root-password
+            - name: MARIADB_USER
+              value: wordpress
+            - name: MARIADB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wordpress.fullname" . }}-credentials
+                  key: mariadb-password
+            - name: MARIADB_DATABASE
+              value: wordpress
+          volumeMounts:
+            - name: mariadb-data
+              mountPath: /var/lib/mysql
+            - name: tmp
+              mountPath: /tmp
+            - name: run-mysqld
+              mountPath: /var/run/mysqld
+          resources:
+            {{- toYaml .Values.database.resources | nindent 12 }}
+          # Rigorous Lifecycle Probing
+          startupProbe:
+            exec:
+              command: ["healthcheck.sh", "--connect", "--innodb_initialized"]
+            failureThreshold: 60
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["healthcheck.sh", "--connect", "--innodb_initialized"]
+            initialDelaySeconds: 5
+            failureThreshold: 3
+            periodSeconds: 15
+          readinessProbe:
+            exec:
+              command: ["healthcheck.sh", "--connect", "--innodb_initialized"]
+            initialDelaySeconds: 2
+            failureThreshold: 3
+            periodSeconds: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: run-mysqld
+          emptyDir: {}
+  # Persistent Storage Provisioning
+  volumeClaimTemplates:
+    - metadata:
+        name: mariadb-data
+      spec:
+        accessModes:
+          - ReadWriteOncePod
+        {{- if .Values.database.storageClassName }}
+        storageClassName: {{ .Values.database.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.database.storage }}
+{{- end }}

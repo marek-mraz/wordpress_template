@@ -1,0 +1,88 @@
+{{- if .Values.networkPolicy.enabled }}
+# WordPress: ingress on 8080 from the ingress controller's namespace, egress to
+# MariaDB, DNS, HTTPS (OIDC issuer, wordpress.org) and HTTP (in-cluster Keycloak).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "wordpress.fullname" . }}-web
+  labels:
+    {{- include "wordpress.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "wordpress.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- if .Values.networkPolicy.ingressNamespace }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace | quote }}
+        {{- else }}
+        # No ingressNamespace set: any pod in the cluster may reach port 8080.
+        - namespaceSelector: {}
+        {{- end }}
+      ports:
+        - port: 8080
+  egress:
+    # DNS resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # MariaDB
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "wordpress.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: database
+      ports:
+        - port: 3306
+    # External HTTPS — required for OAuth issuer and WordPress plugin updates
+    - ports:
+        - port: 443
+          protocol: TCP
+    # In-cluster HTTP, e.g. the Keycloak back channel
+    - ports:
+        - port: 80
+          protocol: TCP
+        - port: 8080
+          protocol: TCP
+---
+# MariaDB: allow ingress only from WordPress pods on 3306, egress DNS only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "wordpress.fullname" . }}-db
+  labels:
+    {{- include "wordpress.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "wordpress.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "wordpress.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: web
+      ports:
+        - port: 3306
+  egress:
+    # DNS resolution only
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}

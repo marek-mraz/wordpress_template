@@ -1,0 +1,8 @@
+.git/
+.github/
+component/
+tests/
+*.md
+.env
+.env.example
+compose.yaml

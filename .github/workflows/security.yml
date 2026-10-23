@@ -1,0 +1,38 @@
+name: Security scan
+
+# Daily vulnerability scan + on every PR and push to main. GitHub runs
+# `schedule` only from the default branch, so the daily run starts once this
+# file is merged to main.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # Trivy does not know WordPress plugin/theme/core CVEs: wpvulnerability.net does.
+      - name: WordPress core/plugin/theme check (self-test, then the real check)
+        run: python3 tests/wpvuln.py --self-test && python3 tests/wpvuln.py
+      - name: Build image
+        run: docker build -t scan:ci .
+      # Fixable HIGH/CRITICAL in OS packages and bundled libraries. The DB is
+      # downloaded fresh each run (daily scan wants today's data). Suppressions,
+      # if ever needed, go into .trivyignore (picked up from the repo root).
+      - name: Trivy image scan
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/src:ro" -w /src
+          aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+          image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress
+          --scanners vuln --pkg-types os,library --table-mode detailed scan:ci
