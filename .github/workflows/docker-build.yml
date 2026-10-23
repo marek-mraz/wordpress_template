@@ -6,6 +6,11 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main, master]
+  # weekly rebuild: picks up base-image and apt fixes (deployments pin a digest,
+  # so nothing changes in a cluster until the new digest is pinned)
+  schedule:
+    - cron: "41 2 * * 1"
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
