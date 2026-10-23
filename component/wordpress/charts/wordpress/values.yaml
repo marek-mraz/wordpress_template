@@ -15,7 +15,7 @@ app:
     tag: ""
     pullPolicy: IfNotPresent
   # busybox for the wait-for-mariadb initContainer and the helm test
-  busyboxImage: "busybox:1.37"
+  busyboxImage: "busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
   # Extra /etc/hosts entries (e.g. hairpin NAT: the site's own domain -> ingress ClusterIP)
   hostAliases: []
   # PVC for /var/www/html (core, plugins, uploads)
