@@ -105,7 +105,7 @@ database:
   replicaCount: 1
   image:
     repository: mariadb
-    tag: "11.8"
+    tag: "11.8.9@sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa"
     pullPolicy: IfNotPresent
   storage: 10Gi
   storageClassName: ""

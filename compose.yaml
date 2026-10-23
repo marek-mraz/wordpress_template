@@ -2,7 +2,13 @@
 # filesystem, no capabilities, port 8080. Start: cp .env.example .env; docker compose up --build
 services:
   db:
-    image: mariadb:11.8
+    image: mariadb:11.8.9@sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa
+    # mysql uid: a new named volume inherits the image's mysql-owned datadir
+    user: "999:999"
+    read_only: true
+    tmpfs: [/tmp, "/run/mysqld:uid=999"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     environment:
       MARIADB_DATABASE: wordpress
       MARIADB_USER: wordpress

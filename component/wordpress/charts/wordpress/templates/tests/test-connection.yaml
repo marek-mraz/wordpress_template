@@ -12,6 +12,8 @@ spec:
   restartPolicy: Never
   securityContext:
     runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
   containers:
     - name: test-http
       image: {{ .Values.app.busyboxImage }}
@@ -24,6 +26,9 @@ spec:
         capabilities:
           drop:
             - ALL
+      resources:
+        requests: {cpu: 10m, memory: 16Mi}
+        limits: {memory: 32Mi}
       command:
         - sh
         - -c

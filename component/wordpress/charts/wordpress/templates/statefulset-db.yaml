@@ -37,7 +37,12 @@ spec:
     spec:
       serviceAccountName: {{ include "wordpress.dbServiceAccountName" . }}
       automountServiceAccountToken: false
+      # The official image runs as mysql (999) without its root init step when the
+      # datadir is writable: fsGroup makes the fresh volume group-writable.
       securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
         fsGroup: 999
         seccompProfile:
           type: RuntimeDefault
@@ -49,18 +54,11 @@ spec:
             - --innodb-buffer-pool-size=64M
             - --performance-schema=OFF
           securityContext:
-            # MariaDB image initialises as root then drops to mysql (UID 999) via gosu;
-            # runAsNonRoot is not set for compatibility with the official image init sequence.
-            # CHOWN/SETUID/SETGID/DAC_OVERRIDE are required for the entrypoint chown+gosu sequence.
-            allowPrivilegeEscalation: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-              add:
-                - CHOWN
-                - SETUID
-                - SETGID
-                - DAC_OVERRIDE
           ports:
             - containerPort: 3306
           env:
