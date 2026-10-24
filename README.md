@@ -14,7 +14,8 @@ Fork it, add your theme, push: CI builds, tests and publishes the image.
 pinned by digest:
 
 - **Immutable docroot**: core, plugins, themes, mu-plugins, translations and
-  `wp-config.php` are baked into `/var/www/html`, owned by root and read-only
+  `wp-config.php` are baked into `/usr/src/wordpress` (the docroot), owned by
+  root and read-only
   for PHP. Only `wp-content/uploads` is writable (the volume). WordPress cannot
   install or update code at runtime (`DISALLOW_FILE_MODS`, auto-updates off);
   a new version is a new image, so the image you scan is the code that runs.
@@ -56,7 +57,9 @@ pinned by digest:
 - `security.yml`: daily Trivy scan (HIGH/CRITICAL with a fix) and a
   wpvulnerability.net check of core, plugins and themes (`tests/wpvuln.py`).
 - Dependabot for composer, Docker base images and Actions, with a 7-day
-  cooldown. Every Action is pinned by SHA.
+  cooldown (none for the `wordpress` image and wordpress.org plugins, whose
+  releases are mostly security fixes). Every Action is pinned by SHA.
+- The image rebuilds daily, so base-image and Debian fixes land without a PR.
 
 **Kubernetes**: `component/wordpress/charts/wordpress` (Helm chart) and
 `component/wordpress/` (platform component). See [DEPLOY.md](DEPLOY.md).

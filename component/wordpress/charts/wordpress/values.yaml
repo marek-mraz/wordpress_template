@@ -4,8 +4,8 @@ global:
 
 app:
   replicaCount: 1
-  # Theme / space-separated plugins to activate (installed from wordpress.org if
-  # the image does not ship them) on every start, via WP-CLI.
+  # Theme / space-separated plugins to activate on every start, via WP-CLI.
+  # They must ship in the image (nothing is installed at runtime).
   theme: ""
   plugins: "redirection lightbox-photoswipe"
   image:

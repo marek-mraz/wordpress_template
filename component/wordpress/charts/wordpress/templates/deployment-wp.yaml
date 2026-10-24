@@ -192,7 +192,7 @@ spec:
             # Only uploads persist: core, plugins, themes and wp-config.php are
             # part of the (read-only) image.
             - name: wordpress-data
-              mountPath: /var/www/html/wp-content/uploads
+              mountPath: /usr/src/wordpress/wp-content/uploads
               {{- with .Values.app.storageSubPath }}
               subPath: {{ . }}
               {{- end }}
@@ -230,10 +230,12 @@ spec:
                     }
 
                     log "========== setup-wp.sh START =========="
+                    # The image entrypoint runs the DB schema upgrade first; wait for it.
+                    for _ in $(seq 1 120); do [ -e /tmp/wp-entrypoint.done ] && break; sleep 1; done
                     log "wp-cli: $(wp --version --allow-root 2>&1)"
 
                     log "Checking wp core is-installed..."
-                    if ! wp core is-installed --allow-root --path=/var/www/html >> "$LOG" 2>&1; then
+                    if ! wp core is-installed --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1; then
                       log "WordPress NOT installed, running initial wp core install..."
                       if wp core install \
                         --url="$WP_URL" \
@@ -243,7 +245,7 @@ spec:
                         --admin_email="$WP_ADMIN_EMAIL" \
                         --skip-email \
                         --allow-root \
-                        --path=/var/www/html >> "$LOG" 2>&1; then
+                        --path=/usr/src/wordpress >> "$LOG" 2>&1; then
                         log "wp core install SUCCESS"
                       else
                         log "ERROR: wp core install FAILED (exit code: $?)"
@@ -260,74 +262,74 @@ spec:
                     # 1. Site Title & Tagline
                     if [ -n "${WP_TITLE:-}" ]; then
                       log "Enforcing site title: $WP_TITLE"
-                      wp option update blogname "$WP_TITLE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update blogname "$WP_TITLE" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
                     if [ -n "${WP_TAGLINE:-}" ]; then
                       log "Enforcing tagline: $WP_TAGLINE"
-                      wp option update blogdescription "$WP_TAGLINE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update blogdescription "$WP_TAGLINE" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
 
                     # 2. Site URL
                     if [ -n "${WP_URL:-}" ]; then
                       log "Enforcing site URL: $WP_URL"
-                      wp option update siteurl "$WP_URL" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update siteurl "$WP_URL" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
                     if [ -n "${WP_HOME:-}" ]; then
                       log "Enforcing home URL: $WP_HOME"
-                      wp option update home "$WP_HOME" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update home "$WP_HOME" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     elif [ -n "${WP_URL:-}" ]; then
-                      wp option update home "$WP_URL" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update home "$WP_URL" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
 
                     # 3. Admin Email
                     if [ -n "${WP_ADMIN_EMAIL:-}" ]; then
                       log "Enforcing admin email: $WP_ADMIN_EMAIL"
-                      wp option update admin_email "$WP_ADMIN_EMAIL" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update admin_email "$WP_ADMIN_EMAIL" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
 
                     # 3.5. Timezone, Date, Time, Week, Registration
                     if [ -n "${WP_TIMEZONE_STRING:-}" ]; then
-                      wp option update timezone_string "$WP_TIMEZONE_STRING" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update timezone_string "$WP_TIMEZONE_STRING" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
                     if [ -n "${WP_DATE_FORMAT:-}" ]; then
-                      wp option update date_format "$WP_DATE_FORMAT" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update date_format "$WP_DATE_FORMAT" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
                     if [ -n "${WP_TIME_FORMAT:-}" ]; then
-                      wp option update time_format "$WP_TIME_FORMAT" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update time_format "$WP_TIME_FORMAT" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
                     if [ -n "${WP_START_OF_WEEK:-}" ]; then
-                      wp option update start_of_week "$WP_START_OF_WEEK" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update start_of_week "$WP_START_OF_WEEK" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
                     if [ -n "${WP_USERS_CAN_REGISTER:-}" ]; then
-                      wp option update users_can_register "$WP_USERS_CAN_REGISTER" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update users_can_register "$WP_USERS_CAN_REGISTER" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
                     if [ -n "${WP_DEFAULT_ROLE:-}" ]; then
-                      wp option update default_role "$WP_DEFAULT_ROLE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp option update default_role "$WP_DEFAULT_ROLE" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
 
                     # 4. Language (translations are baked into the image: WP_LANGUAGES build arg)
                     if [ -n "${WP_LANGUAGE:-}" ]; then
                       log "Enforcing language: $WP_LANGUAGE"
-                      wp site switch-language "$WP_LANGUAGE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: language $WP_LANGUAGE is not in the image"
+                      wp site switch-language "$WP_LANGUAGE" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || log "WARN: language $WP_LANGUAGE is not in the image"
                     fi
 
                     # 5. Theme and 6. plugins: activate what the image ships (nothing is
                     #    installed at runtime; the docroot is read-only)
                     if [ -n "${WP_THEME:-}" ]; then
                       log "Enforcing theme: $WP_THEME"
-                      wp theme activate "$WP_THEME" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: theme $WP_THEME is not in the image"
+                      wp theme activate "$WP_THEME" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || log "WARN: theme $WP_THEME is not in the image"
                     fi
                     if [ -n "${WP_PLUGINS:-}" ]; then
                       for plugin in $WP_PLUGINS; do
                         log "Enforcing plugin: $plugin"
-                        wp plugin activate "$plugin" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: plugin $plugin is not in the image"
+                        wp plugin activate "$plugin" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || log "WARN: plugin $plugin is not in the image"
                       done
                     fi
 
                     # 7. Permalink Structure (rewrite rules live in the image's Apache config, no .htaccess)
                     if [ -n "${WP_PERMALINK_STRUCTURE:-}" ]; then
                       log "Enforcing permalink structure: $WP_PERMALINK_STRUCTURE"
-                      wp rewrite structure "$WP_PERMALINK_STRUCTURE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp rewrite structure "$WP_PERMALINK_STRUCTURE" --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || true
                     fi
 
                     # =========================================================
@@ -335,7 +337,7 @@ spec:
                     # =========================================================
                     if [ -n "${OIDC_CLIENT_ID:-}" ]; then
                       log "Activating the OIDC login plugin..."
-                      wp plugin activate daggerhart-openid-connect-generic --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: openid-connect plugin activation failed"
+                      wp plugin activate daggerhart-openid-connect-generic --allow-root --path=/usr/src/wordpress >> "$LOG" 2>&1 || log "WARN: openid-connect plugin activation failed"
                     fi
 
                     log "========== setup-wp.sh DONE =========="

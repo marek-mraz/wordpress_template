@@ -9,5 +9,7 @@ set -Eeuo pipefail
 if wp core is-installed --allow-root --path="$PWD" 2>/dev/null; then
 	wp core update-db --allow-root --path="$PWD" >&2 || echo >&2 "WARN: wp core update-db failed (admin will be prompted)"
 fi
+# The chart's postStart setup script waits for this before it touches the DB.
+touch /tmp/wp-entrypoint.done
 
 exec docker-entrypoint.sh "$@"

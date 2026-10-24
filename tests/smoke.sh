@@ -36,7 +36,7 @@ cleanup
 fail() { echo "FAIL: $*" >&2; docker logs --tail 40 "$WP" 2>&1 | grep -v '" 200 \|" 302 ' >&2 || true; exit 1; }
 ok() { echo "ok: $*"; }
 in_wp() { docker exec -i "$WP" bash -c "$1"; }
-wpcli() { docker exec "$WP" wp --path=/var/www/html "$@" 2> >(grep -v oidc-mu-plugin >&2); }
+wpcli() { docker exec "$WP" wp --path=/usr/src/wordpress "$@" 2> >(grep -v oidc-mu-plugin >&2); }
 
 echo "==> tooling: php + wp-cli present, no build tools"
 docker run --rm --entrypoint bash "$IMAGE" -ec '
@@ -48,15 +48,15 @@ docker run --rm --entrypoint bash "$IMAGE" -ec '
 
 echo "==> custom PHP lints"
 docker run --rm --entrypoint bash "$IMAGE" -ec \
-    'for f in /var/www/html/wp-content/mu-plugins/*.php /var/www/html/wp-config*.php; do php -l "$f"; done'
+    'for f in /usr/src/wordpress/wp-content/mu-plugins/*.php /usr/src/wordpress/wp-config*.php; do php -l "$f"; done'
 
 echo "==> docroot baked into the image, owned by root; only uploads owned by www-data"
 docker run --rm --entrypoint bash "$IMAGE" -ec '
-    cd /var/www/html
+    cd /usr/src/wordpress
     for d in plugins/daggerhart-openid-connect-generic plugins/mcp-adapter plugins/redirection \
              plugins/lightbox-photoswipe themes/twentytwentyfive; do test -d "wp-content/$d"; done
     for f in harden oidc oidc-pkce meta-description; do test -f "wp-content/mu-plugins/$f.php"; done
-    test ! -e wp-content/plugins/akismet && test ! -e wp-content/plugins/hello.php && test ! -e /usr/src/wordpress
+    test ! -e wp-content/plugins/akismet && test ! -e wp-content/plugins/hello.php && test ! -e /var/www/html/index.php && test ! -e /var/www/html/wp-includes
     grep -q "wp-config-image.php" wp-config.php
     [ -z "$(find . -path ./wp-content/uploads -prune -o ! -user root -print -o -perm /022 -print | head -1)" ] \
         || { echo "not root-owned or group/other-writable: $(find . -path ./wp-content/uploads -prune -o ! -user root -print -o -perm /022 -print | head -3)"; exit 1; }
@@ -75,7 +75,7 @@ until docker exec "$DB" healthcheck.sh --connect --innodb_initialized >/dev/null
 
 echo "==> boot hardened: uid 33, read-only rootfs, cap-drop ALL, :8080"
 docker run -d --name "$WP" --network "$NET" --network-alias wpsite \
-    --user 33:33 --read-only --tmpfs /tmp:rw,exec,mode=1777 --cap-drop ALL --security-opt no-new-privileges \
+    --user 33:33 --read-only --tmpfs /tmp:rw,exec,mode=1777 --tmpfs /usr/src/wordpress/wp-content/uploads:rw,uid=33,gid=33,mode=0755 --cap-drop ALL --security-opt no-new-privileges \
     -e APACHE_PORT=8080 "${SALTS[@]}" \
     -e WORDPRESS_DB_HOST="$DB" -e WORDPRESS_DB_USER=wp -e WORDPRESS_DB_PASSWORD=wp -e WORDPRESS_DB_NAME=wp \
     -e OIDC_CLIENT_ID=wp -e OIDC_CLIENT_SECRET=smoke-secret -e OIDC_SCOPE="openid email profile" \
@@ -118,10 +118,10 @@ for f in readme.html license.txt xmlrpc.php wp-config.php wp-config-image.php wp
     c=$(in_wp "curl -s -o /dev/null -w '%{http_code}' $WPURL/$f")
     [ "$c" = 403 ] || fail "/$f returned $c, expected 403"
 done
-in_wp 'mkdir -p /var/www/html/wp-content/uploads && echo "<?php echo 1;" > /var/www/html/wp-content/uploads/x.php'
+in_wp 'mkdir -p /usr/src/wordpress/wp-content/uploads && echo "<?php echo 1;" > /usr/src/wordpress/wp-content/uploads/x.php'
 c=$(in_wp "curl -s -o /dev/null -w '%{http_code}' $WPURL/wp-content/uploads/x.php")
 [ "$c" = 403 ] || fail "PHP in uploads returned $c, expected 403"
-ver=$(docker exec "$WP" php -r 'include "/var/www/html/wp-includes/version.php"; echo $wp_version;')
+ver=$(docker exec "$WP" php -r 'include "/usr/src/wordpress/wp-includes/version.php"; echo $wp_version;')
 body=$(in_wp "curl -s $WPURL/; curl -s $WPURL/feed/")
 ! grep -qE "ver=$ver|name=\"generator\"|<generator>|WordPress $ver" <<<"$body" || fail "WordPress version $ver leaks in HTML/feed"
 ok "security headers, 403 on sensitive files + uploads PHP, no version in headers/HTML/feed"
@@ -129,9 +129,9 @@ ok "security headers, 403 on sensitive files + uploads PHP, no version in header
 echo "==> immutable docroot: code and config read-only, uploads writable, schema upgraded on start"
 for f in index.php wp-config.php wp-includes/version.php .htaccess wp-content/x.php \
          wp-content/plugins/x.php wp-content/themes/x.php wp-content/mu-plugins/x.php wp-content/languages/x.php; do
-    ! in_wp "touch /var/www/html/$f" 2>/dev/null || fail "www-data can write /var/www/html/$f"
+    ! in_wp "touch /usr/src/wordpress/$f" 2>/dev/null || fail "www-data can write /usr/src/wordpress/$f"
 done
-in_wp 'touch /var/www/html/wp-content/uploads/ok && rm /var/www/html/wp-content/uploads/ok' || fail "uploads not writable"
+in_wp 'touch /usr/src/wordpress/wp-content/uploads/ok && rm /usr/src/wordpress/wp-content/uploads/ok' || fail "uploads not writable"
 [ "$(wpcli eval 'echo (int) wp_is_file_mod_allowed("smoke"), (int) DISALLOW_FILE_EDIT, (int) AUTOMATIC_UPDATER_DISABLED;')" = 011 ] \
     || fail "file mods / file editor / auto-updates not disabled"
 restart() {
@@ -259,8 +259,8 @@ ok "OIDC end to end (PKCE enforced by Keycloak)"
 
 echo "==> local password login: on without OIDC, off with it"
 pw='echo has_filter("authenticate","wp_authenticate_username_password") ? "on" : "off";'
-[ "$(docker exec "$WP" env -u OIDC_CLIENT_ID wp --path=/var/www/html eval "$pw" 2>/dev/null)" = on ] || fail "password login off without OIDC"
-[ "$(docker exec "$WP" wp --path=/var/www/html eval "$pw" 2>/dev/null)" = off ] || fail "password login on with OIDC"
+[ "$(docker exec "$WP" env -u OIDC_CLIENT_ID wp --path=/usr/src/wordpress eval "$pw" 2>/dev/null)" = on ] || fail "password login off without OIDC"
+[ "$(docker exec "$WP" wp --path=/usr/src/wordpress eval "$pw" 2>/dev/null)" = off ] || fail "password login on with OIDC"
 ok "password login follows OIDC_CLIENT_ID"
 
 echo "==> classic mode (plain docker run): root master on :80, www-data workers, OIDC redirect"
@@ -280,7 +280,7 @@ done
 ok "root master, www-data workers, wp-login -> Keycloak"
 
 echo "==> meta description"
-docker exec "$WP80" wp option update blogdescription "Smoke tagline" --allow-root --path=/var/www/html >/dev/null
+docker exec "$WP80" wp option update blogdescription "Smoke tagline" --allow-root --path=/usr/src/wordpress >/dev/null
 head=$(docker exec "$WP80" curl -s -H "Host: ${WPURL#http://}" http://localhost/)
 grep -q '<meta name="description" content="Smoke tagline">' <<<"$head" \
     || { grep -oE '<title>[^<]*|<meta [^>]*>' <<<"$head" | head; echo "${head:0:300}"; fail "no meta description from tagline"; }
@@ -291,11 +291,11 @@ echo "==> Kubernetes-style uploads volume (root-owned, group 33): first start, u
 WPF=$P-wpfresh
 docker rm -f "$WPF" >/dev/null 2>&1 || true
 docker run -d --name "$WPF" --network "$NET" --user 33:33 --read-only --cap-drop ALL "${SALTS[@]}" \
-    --tmpfs /tmp:rw,exec,mode=1777 --tmpfs /var/www/html/wp-content/uploads:rw,uid=0,gid=33,mode=2775 -e APACHE_PORT=8080 \
+    --tmpfs /tmp:rw,exec,mode=1777 --tmpfs /usr/src/wordpress/wp-content/uploads:rw,uid=0,gid=33,mode=2775 -e APACHE_PORT=8080 \
     -e WORDPRESS_DB_HOST="$DB" -e WORDPRESS_DB_USER=wp -e WORDPRESS_DB_PASSWORD=wp -e WORDPRESS_DB_NAME=wp "$IMAGE" >/dev/null
 for _ in $(seq 1 30); do docker exec "$WPF" curl -sf -o /dev/null http://localhost:8080/wp-login.php?action=postpass 2>/dev/null && break; sleep 2; done
 [ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$WPF")" = "true 0" ] || { docker logs --tail 20 "$WPF" >&2; fail "first start on a root-owned volume crashed"; }
-docker exec "$WPF" sh -c 'mkdir -p /var/www/html/wp-content/uploads/2026/10 && touch /var/www/html/wp-content/uploads/2026/10/a.jpg' \
+docker exec "$WPF" sh -c 'mkdir -p /usr/src/wordpress/wp-content/uploads/2026/10 && touch /usr/src/wordpress/wp-content/uploads/2026/10/a.jpg' \
     || fail "uploads on a root-owned group-33 volume not writable"
 docker rm -f "$WPF" >/dev/null
 ok "root-owned group-33 uploads volume: starts, uploads writable as uid 33"

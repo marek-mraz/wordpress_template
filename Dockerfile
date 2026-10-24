@@ -35,20 +35,22 @@ ADD --chmod=755 --checksum=sha256:ce34ddd838f7351d6759068d09793f26755463b4a4610a
 COPY --from=build /build/wp-content/ /usr/src/wordpress/wp-content/
 COPY wp-content/ /usr/src/wordpress/wp-content/
 
-# Immutable docroot: core, the bundled wp-content and wp-config.php are baked
-# into /var/www/html, owned by root, read-only for Apache/PHP (www-data). Only
-# wp-content/uploads is writable (the volume). WordPress cannot install or
-# update code at runtime; a new version is a new image. wp-config.php is the
-# upstream env-driven template plus config/wp-config-image.php (constants,
-# salts required). WP_LANGUAGES: translations to bake in, e.g. "sk_SK".
+# Immutable docroot (upstream's "static image" recipe): Apache serves
+# /usr/src/wordpress, which is part of the image, not the base image's
+# VOLUME /var/www/html (container runtimes mount that one read-write even on a
+# read-only root filesystem, and a volume mounted there is simply not served).
+# Core, the bundled wp-content and wp-config.php are owned by root, read-only
+# for Apache/PHP (www-data); only wp-content/uploads is writable (the volume).
+# WordPress cannot install or update code at runtime; a new version is a new
+# image. wp-config.php is the upstream env-driven template plus
+# config/wp-config-image.php (constants, salts required).
+# WP_LANGUAGES: translations to bake in, e.g. "sk_SK".
 ARG WP_LANGUAGES=""
-COPY config/wp-config-image.php config/bake-translations.php /tmp/bake/
-RUN cp -a /usr/src/wordpress/. /var/www/html/ \
-    && rm -rf /usr/src/wordpress \
-    && cd /var/www/html \
-    && mv /tmp/bake/wp-config-image.php . \
+COPY composer.json config/wp-config-image.php config/bake-translations.php /tmp/bake/
+WORKDIR /usr/src/wordpress
+RUN mv /tmp/bake/wp-config-image.php . \
     && sed '1a require __DIR__ . "/wp-config-image.php";' wp-config-docker.php > wp-config.php \
-    && php /tmp/bake/bake-translations.php /var/www/html $WP_LANGUAGES \
+    && php /tmp/bake/bake-translations.php "$PWD" /tmp/bake/composer.json $WP_LANGUAGES \
     && rm -rf /tmp/bake \
     && mkdir -p wp-content/uploads \
     && chown -R root:root . && chmod -R u=rwX,go=rX . \
@@ -81,6 +83,7 @@ RUN sed -i 's/^Listen 80$/Listen ${APACHE_PORT}/' /etc/apache2/ports.conf \
     && a2enmod -q headers \
     && a2dismod -q -f autoindex status negotiation auth_basic authn_file authz_user \
     && a2disconf -q serve-cgi-bin \
+    && find /etc/apache2 -name '*.conf' -type f -exec sed -ri -e 's!/var/www/html!/usr/src/wordpress!g' -e 's!Directory /var/www/!Directory /usr/src/wordpress!g' '{}' + \
     && a2enconf -q wordpress \
     && ln -s /tmp/setup-wp.sh /usr/local/bin/setup-wp.sh \
     && apache2ctl -t

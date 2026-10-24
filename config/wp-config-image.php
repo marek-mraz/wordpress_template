@@ -8,6 +8,7 @@ define('DISALLOW_FILE_EDIT', true);          // no theme/plugin file editor
 define('AUTOMATIC_UPDATER_DISABLED', true);  // no background updates
 define('WP_AUTO_UPDATE_CORE', false);
 define('WP_TEMP_DIR', '/tmp');
+define('FS_METHOD', 'direct');              // uploads: plain file writes, no FTP fallback
 
 // Salts sign every login cookie and nonce. The upstream template falls back to
 // a public placeholder when they are missing; refuse to run instead.
@@ -17,10 +18,12 @@ foreach (['AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY',
     $wp_salt_value = $wp_salt_file ? (string) @file_get_contents($wp_salt_file) : (string) getenv("WORDPRESS_$wp_salt");
     if (strlen(trim($wp_salt_value)) < 32) {
         error_log("wp-config: WORDPRESS_$wp_salt is missing or shorter than 32 characters");
-        if (PHP_SAPI !== 'cli') {
-            http_response_code(503);
+        if (PHP_SAPI === 'cli') {
+            fwrite(STDERR, "WordPress is not configured: WORDPRESS_$wp_salt is missing.\n");
+            exit(1);
         }
-        exit("WordPress is not configured: WORDPRESS_$wp_salt is missing.\n");
+        http_response_code(503);
+        exit("WordPress is not configured.\n");
     }
 }
 unset($wp_salt, $wp_salt_file, $wp_salt_value);
