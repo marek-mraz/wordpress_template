@@ -64,11 +64,25 @@ jobs:
           context: .
           load: true
           tags: wordpress-test:ci
+          # Fresh base image and a fresh apt-get upgrade layer on every run
+          # (APT_REFRESH busts only that layer); otherwise the cache keeps
+          # shipping packages with known fixes.
+          pull: true
+          build-args: APT_REFRESH=${{ github.run_id }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Smoke test image (MariaDB, non-root/read-only, headers, OIDC e2e vs Keycloak)
         run: IMAGE=wordpress-test:ci bash tests/smoke.sh
+
+      # Gate: no image with a fixable HIGH/CRITICAL gets pushed. Suppressions,
+      # if ever needed, go into .trivyignore (picked up from the repo root).
+      - name: Trivy image scan
+        run: >-
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/src:ro" -w /src
+          aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+          image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress
+          --scanners vuln --pkg-types os,library --table-mode detailed wordpress-test:ci
 
       - name: Helm chart check (lint, render, setup script syntax)
         run: bash tests/chart.sh
@@ -78,6 +92,7 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
+          build-args: APT_REFRESH=${{ github.run_id }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

@@ -17,6 +17,8 @@ FROM wordpress:7.1.3-php8.5-apache@sha256:574ea6f58239fba5fc95fe22e0368377725953
 # php image keeps for docker-php-ext-install and ghostscript (only used for PDF
 # thumbnails, a long CVE history). 'less' is the pager WP-CLI uses.
 # Akismet/Hello Dolly are not used; the chart copies image plugins to every site.
+# CI passes its run id so this layer (security updates) is never reused from cache.
+ARG APT_REFRESH
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends less \
