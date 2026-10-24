@@ -43,11 +43,14 @@ services:
       WORDPRESS_DB_NAME: wordpress
       # Pick up code edits without a restart
       PHP_OPCACHE_VALIDATE_TIMESTAMPS: 1
+    # Code and wp-config.php are in the image; only uploads persist. The base
+    # image declares VOLUME /var/www/html: after a rebuild start with
+    # `docker compose up -d --build -V` so that anonymous volume is renewed.
     volumes:
-      - wp:/var/www/html
+      - uploads:/var/www/html/wp-content/uploads
       # Theme development: edit in place
       # - ./wp-content/themes/mytheme:/var/www/html/wp-content/themes/mytheme
 
 volumes:
   db:
-  wp:
+  uploads:

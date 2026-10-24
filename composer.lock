@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "5d5b20e2ea4c9870e253efa74bdebd0a",
+    "content-hash": "8ac5b7172cf7fabcb568258c89647da2",
     "packages": [
         {
             "name": "composer/installers",
@@ -151,24 +151,6 @@
                 }
             ],
             "time": "2024-06-24T20:46:46+00:00"
-        },
-        {
-            "name": "wpackagist-plugin/cache-enabler",
-            "version": "1.8.17",
-            "source": {
-                "type": "svn",
-                "url": "https://plugins.svn.wordpress.org/cache-enabler/",
-                "reference": "tags/1.8.17"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://downloads.wordpress.org/plugin/cache-enabler.1.8.17.zip"
-            },
-            "require": {
-                "composer/installers": "^1.0 || ^2.0"
-            },
-            "type": "wordpress-plugin",
-            "homepage": "https://wordpress.org/plugins/cache-enabler/"
         },
         {
             "name": "wpackagist-plugin/daggerhart-openid-connect-generic",

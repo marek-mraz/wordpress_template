@@ -101,6 +101,14 @@ spec:
                 secretKeyRef:
                   name: {{ include "wordpress.fullname" . }}-credentials
                   key: wordpress-password
+            # Salts sign login cookies; the image refuses to run without them.
+            {{- range list "AUTH_KEY" "SECURE_AUTH_KEY" "LOGGED_IN_KEY" "NONCE_KEY" "AUTH_SALT" "SECURE_AUTH_SALT" "LOGGED_IN_SALT" "NONCE_SALT" }}
+            - name: WORDPRESS_{{ . }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wordpress.fullname" $ }}-credentials
+                  key: {{ . | lower | replace "_" "-" }}
+            {{- end }}
             - name: WP_THEME
               value: {{ .Values.app.theme | default "" | quote }}
             - name: WP_PLUGINS
@@ -181,8 +189,13 @@ spec:
               value: {{ .Values.oauth.enforcePrivacy | quote }}
             {{- end }}
           volumeMounts:
+            # Only uploads persist: core, plugins, themes and wp-config.php are
+            # part of the (read-only) image.
             - name: wordpress-data
-              mountPath: /var/www/html
+              mountPath: /var/www/html/wp-content/uploads
+              {{- with .Values.app.storageSubPath }}
+              subPath: {{ . }}
+              {{- end }}
             # Writable scratch on a read-only root filesystem: Apache run/lock
             # dirs, PHP sessions/uploads, WP-CLI cache, the postStart script.
             - name: tmp
@@ -209,7 +222,7 @@ spec:
                     cat << 'EOF' > /usr/local/bin/setup-wp.sh
                     #!/bin/bash
                     set -euo pipefail
-                    LOG=/var/www/html/setup-wp.log
+                    LOG=/tmp/setup-wp.log
                     log() {
                       local msg="[$(date '+%Y-%m-%d %H:%M:%S')] [setup-wp] $*"
                       echo "$msg" >> "$LOG"
@@ -217,20 +230,6 @@ spec:
                     }
 
                     log "========== setup-wp.sh START =========="
-                    log "Waiting for wp-config.php..."
-                    WAIT=0
-                    while [ ! -f /var/www/html/wp-config.php ]; do
-                      sleep 5
-                      WAIT=$((WAIT+5))
-                      log "  still waiting... ${WAIT}s elapsed"
-                      if [ $WAIT -ge 300 ]; then
-                        log "FATAL: wp-config.php not found after 300s, aborting"
-                        exit 1
-                      fi
-                    done
-                    log "wp-config.php found after ${WAIT}s"
-                    sleep 10
-
                     log "wp-cli: $(wp --version --allow-root 2>&1)"
 
                     log "Checking wp core is-installed..."
@@ -306,42 +305,29 @@ spec:
                       wp option update default_role "$WP_DEFAULT_ROLE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
                     fi
 
-                    # 4. Language
+                    # 4. Language (translations are baked into the image: WP_LANGUAGES build arg)
                     if [ -n "${WP_LANGUAGE:-}" ]; then
                       log "Enforcing language: $WP_LANGUAGE"
-                      # Ensure language files are downloaded, then switch the site's active language
-                      wp language core install "$WP_LANGUAGE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
-                      wp site switch-language "$WP_LANGUAGE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: Failed to switch language"
+                      wp site switch-language "$WP_LANGUAGE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: language $WP_LANGUAGE is not in the image"
                     fi
 
-                    log "Syncing custom themes and plugins from image to PVC..."
-                    mkdir -p /var/www/html/wp-content/mu-plugins /var/www/html/wp-content/plugins /var/www/html/wp-content/themes
-                    cp -af /usr/src/wordpress/wp-content/mu-plugins/. /var/www/html/wp-content/mu-plugins/ 2>/dev/null || true
-                    cp -af /usr/src/wordpress/wp-content/plugins/. /var/www/html/wp-content/plugins/ 2>/dev/null || true
-                    cp -af /usr/src/wordpress/wp-content/themes/. /var/www/html/wp-content/themes/ 2>/dev/null || true
-
-                    # 5. Theme
+                    # 5. Theme and 6. plugins: activate what the image ships (nothing is
+                    #    installed at runtime; the docroot is read-only)
                     if [ -n "${WP_THEME:-}" ]; then
                       log "Enforcing theme: $WP_THEME"
-                      # Install if missing, then activate
-                      wp theme is-installed "$WP_THEME" --allow-root --path=/var/www/html || wp theme install "$WP_THEME" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
-                      wp theme activate "$WP_THEME" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: theme activation failed"
+                      wp theme activate "$WP_THEME" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: theme $WP_THEME is not in the image"
                     fi
-                    
-                    # 6. Plugins
                     if [ -n "${WP_PLUGINS:-}" ]; then
                       for plugin in $WP_PLUGINS; do
                         log "Enforcing plugin: $plugin"
-                        # Install if missing, then activate
-                        wp plugin is-installed "$plugin" --allow-root --path=/var/www/html || wp plugin install "$plugin" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
-                        wp plugin activate "$plugin" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: plugin $plugin activation failed"
+                        wp plugin activate "$plugin" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: plugin $plugin is not in the image"
                       done
                     fi
 
-                    # 7. Permalink Structure
+                    # 7. Permalink Structure (rewrite rules live in the image's Apache config, no .htaccess)
                     if [ -n "${WP_PERMALINK_STRUCTURE:-}" ]; then
                       log "Enforcing permalink structure: $WP_PERMALINK_STRUCTURE"
-                      wp rewrite structure "$WP_PERMALINK_STRUCTURE" --hard --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
+                      wp rewrite structure "$WP_PERMALINK_STRUCTURE" --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
                     fi
 
                     # =========================================================
@@ -352,15 +338,10 @@ spec:
                       wp plugin activate daggerhart-openid-connect-generic --allow-root --path=/var/www/html >> "$LOG" 2>&1 || log "WARN: openid-connect plugin activation failed"
                     fi
 
-                    log "Disabling file modifications and automatic updates (enforcing GitOps)..."
-                    wp config set DISALLOW_FILE_MODS true --raw --type=constant --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
-                    wp config set DISALLOW_FILE_EDIT true --raw --type=constant --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
-                    wp config set AUTOMATIC_UPDATER_DISABLED true --raw --type=constant --allow-root --path=/var/www/html >> "$LOG" 2>&1 || true
-
                     log "========== setup-wp.sh DONE =========="
                     EOF
                     chmod +x /usr/local/bin/setup-wp.sh
-                    nohup /usr/local/bin/setup-wp.sh > /var/www/html/setup-wp.log 2>&1 &
+                    nohup /usr/local/bin/setup-wp.sh > /tmp/setup-wp.log 2>&1 &
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
           {{- /* Probes must NOT hit /wp-login.php: with OIDC login_type=auto every

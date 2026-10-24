@@ -42,9 +42,14 @@ kubectl create namespace $NS
 kubectl -n $NS create secret generic $RELEASE-wordpress-credentials \
   --from-literal=mariadb-root-password="$(openssl rand -hex 24)" \
   --from-literal=mariadb-password="$(openssl rand -hex 24)" \
-  --from-literal=wordpress-password="$(openssl rand -hex 16)"
+  --from-literal=wordpress-password="$(openssl rand -hex 16)" \
+  $(for k in auth-key secure-auth-key logged-in-key nonce-key auth-salt secure-auth-salt logged-in-salt nonce-salt; do
+      printf -- '--from-literal=%s=%s ' "$k" "$(openssl rand -hex 32)"; done)
   # with OIDC also: --from-literal=oauth-client-secret='<client secret from Keycloak>'
 ```
+
+The eight salt keys sign login cookies; the image refuses to start without
+them. Replacing them logs everyone out.
 
 `values-mysite.yaml`:
 
@@ -107,7 +112,8 @@ user's password.
 **Backups**: the chart only annotates the volumes for Velero file-system
 backup, and MariaDB dumps itself into its volume before each Velero backup
 (`backup.enabled: true` adds a daily Schedule for the release). Without
-Velero, back up the two PVCs (`/var/www/html`, `/var/lib/mysql`) yourself.
+Velero, back up the two PVCs (uploads, `/var/lib/mysql`) yourself; the code
+is the image.
 
 ## 3. Platform component
 
@@ -201,8 +207,13 @@ component adds, per WordPress instance:
 ### Upgrades
 
 Bump the base image (Dependabot opens the PR), merge, pin the new digest and
-`sync` the `wordpress` component. On start the pod upgrades core in the
-volume and runs `wp core update-db`; it never downgrades.
+`sync` the `wordpress` component. The new pod runs the new code (it is in the
+image) and `wp core update-db`. Rolling back is pinning the previous digest
+(WordPress does not downgrade its database schema, so keep the DB backup).
+
+A PVC created before the immutable image holds a whole docroot: set
+`app.storageSubPath: wp-content/uploads` so only its uploads are mounted.
+The old core and plugin copies in it are no longer used.
 
 ### Operating notes
 

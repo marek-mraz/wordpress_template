@@ -6,7 +6,8 @@
 # (uid 33, read-only root fs, tmpfs /tmp, no capabilities, port 8080) against
 # MariaDB and a Keycloak with the platform's client layout, then checks:
 # hardening headers / blocked files / no version leaks, non-root processes,
-# core upgrade on an existing docroot, and the OIDC flow end to end (login
+# an immutable docroot (only uploads writable, salts required, DB schema
+# upgraded on start), and the OIDC flow end to end (login
 # redirect, code exchange, user creation + client-role mapping, cross-client
 # role rejection, forged/replayed state, logout). A second container checks
 # classic mode (root master, port 80, www-data workers).
@@ -16,13 +17,17 @@ IMAGE="${IMAGE:?set IMAGE to the image tag to test}"
 DB_IMAGE=mariadb:11.8@sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa
 KC_IMAGE=quay.io/keycloak/keycloak:26.6.4@sha256:0aae0de7fca85525f727d3354df17896092de8bb26ae4c12d89c77e5df8cbce4
 
-P=wp-smoke; NET=$P-net; DB=$P-db; KC=$P-kc; WP=$P-wp; WP80=$P-wp80; WPC=$P-wpcap
+P=wp-smoke; NET=$P-net; DB=$P-db; KC=$P-kc; WP=$P-wp; WP80=$P-wp80; WPN=$P-nosalt
+SALTS=()
+for k in AUTH_KEY SECURE_AUTH_KEY LOGGED_IN_KEY NONCE_KEY AUTH_SALT SECURE_AUTH_SALT LOGGED_IN_SALT NONCE_SALT; do
+    SALTS+=(-e "WORDPRESS_$k=$(openssl rand -hex 32)")
+done
 WPURL=http://wpsite:8080
 KC_INT=http://keycloak:8080      # back channel (token/userinfo/jwks), like the in-cluster service
 KC_PUB=http://kc-public:8080     # browser-facing hostname = issuer, like idm.<domain>
 
 cleanup() {
-    docker rm -fv "$WPC" "$WP" "$WP80" "$P-wpfresh" "$KC" "$DB" >/dev/null 2>&1 || true
+    docker rm -fv "$WPN" "$WP" "$WP80" "$P-wpfresh" "$KC" "$DB" >/dev/null 2>&1 || true
     docker network rm "$NET" >/dev/null 2>&1 || true
 }
 [ -n "${KEEP:-}" ] || trap cleanup EXIT   # KEEP=1 leaves the containers for debugging
@@ -43,16 +48,19 @@ docker run --rm --entrypoint bash "$IMAGE" -ec '
 
 echo "==> custom PHP lints"
 docker run --rm --entrypoint bash "$IMAGE" -ec \
-    'for f in /usr/src/wordpress/wp-content/mu-plugins/*.php; do php -l "$f"; done'
+    'for f in /var/www/html/wp-content/mu-plugins/*.php /var/www/html/wp-config*.php; do php -l "$f"; done'
 
-echo "==> bundled content present, owned by www-data"
+echo "==> docroot baked into the image, owned by root; only uploads owned by www-data"
 docker run --rm --entrypoint bash "$IMAGE" -ec '
-    cd /usr/src/wordpress/wp-content
+    cd /var/www/html
     for d in plugins/daggerhart-openid-connect-generic plugins/mcp-adapter plugins/redirection \
-             plugins/lightbox-photoswipe plugins/cache-enabler themes/twentytwentyfive; do test -d "$d"; done
-    for f in harden oidc oidc-pkce meta-description; do test -f "mu-plugins/$f.php"; done
-    test ! -e plugins/akismet && test ! -e plugins/hello.php
-    [ "$(stat -c %U plugins)" = www-data ]'
+             plugins/lightbox-photoswipe themes/twentytwentyfive; do test -d "wp-content/$d"; done
+    for f in harden oidc oidc-pkce meta-description; do test -f "wp-content/mu-plugins/$f.php"; done
+    test ! -e wp-content/plugins/akismet && test ! -e wp-content/plugins/hello.php && test ! -e /usr/src/wordpress
+    grep -q "wp-config-image.php" wp-config.php
+    [ -z "$(find . -path ./wp-content/uploads -prune -o ! -user root -print -o -perm /022 -print | head -1)" ] \
+        || { echo "not root-owned or group/other-writable: $(find . -path ./wp-content/uploads -prune -o ! -user root -print -o -perm /022 -print | head -3)"; exit 1; }
+    [ "$(stat -c %U wp-content/uploads)" = www-data ]'
 
 echo "==> start MariaDB + Keycloak"
 docker network create "$NET" >/dev/null
@@ -68,7 +76,7 @@ until docker exec "$DB" healthcheck.sh --connect --innodb_initialized >/dev/null
 echo "==> boot hardened: uid 33, read-only rootfs, cap-drop ALL, :8080"
 docker run -d --name "$WP" --network "$NET" --network-alias wpsite \
     --user 33:33 --read-only --tmpfs /tmp:rw,exec,mode=1777 --cap-drop ALL --security-opt no-new-privileges \
-    -e APACHE_PORT=8080 \
+    -e APACHE_PORT=8080 "${SALTS[@]}" \
     -e WORDPRESS_DB_HOST="$DB" -e WORDPRESS_DB_USER=wp -e WORDPRESS_DB_PASSWORD=wp -e WORDPRESS_DB_NAME=wp \
     -e OIDC_CLIENT_ID=wp -e OIDC_CLIENT_SECRET=smoke-secret -e OIDC_SCOPE="openid email profile" \
     -e OIDC_ENDPOINT_LOGIN="$KC_PUB/realms/smoke/protocol/openid-connect/auth" \
@@ -106,7 +114,7 @@ for h in 'X-Content-Type-Options: nosniff' 'X-Frame-Options: SAMEORIGIN' 'Referr
     grep -qi "^$h" <<<"$hdr" || fail "missing header: $h"
 done
 ! grep -qiE '^X-Powered-By|^Server: Apache/' <<<"$hdr" || fail "version leak in headers: $hdr"
-for f in readme.html license.txt xmlrpc.php wp-config.php wp-config-docker.php wp-config-sample.php setup-wp.log; do
+for f in readme.html license.txt xmlrpc.php wp-config.php wp-config-image.php wp-config-docker.php wp-config-sample.php .htaccess; do
     c=$(in_wp "curl -s -o /dev/null -w '%{http_code}' $WPURL/$f")
     [ "$c" = 403 ] || fail "/$f returned $c, expected 403"
 done
@@ -118,22 +126,38 @@ body=$(in_wp "curl -s $WPURL/; curl -s $WPURL/feed/")
 ! grep -qE "ver=$ver|name=\"generator\"|<generator>|WordPress $ver" <<<"$body" || fail "WordPress version $ver leaks in HTML/feed"
 ok "security headers, 403 on sensitive files + uploads PHP, no version in headers/HTML/feed"
 
-echo "==> core upgrade on an existing docroot (never downgrade)"
-setver() { docker exec "$WP" sed -i "s/^\$wp_version = .*/\$wp_version = '$1';/" /var/www/html/wp-includes/version.php; }
-getver() { docker exec "$WP" php -r 'include "/var/www/html/wp-includes/version.php"; echo $wp_version;'; }
+echo "==> immutable docroot: code and config read-only, uploads writable, schema upgraded on start"
+for f in index.php wp-config.php wp-includes/version.php .htaccess wp-content/x.php \
+         wp-content/plugins/x.php wp-content/themes/x.php wp-content/mu-plugins/x.php wp-content/languages/x.php; do
+    ! in_wp "touch /var/www/html/$f" 2>/dev/null || fail "www-data can write /var/www/html/$f"
+done
+in_wp 'touch /var/www/html/wp-content/uploads/ok && rm /var/www/html/wp-content/uploads/ok' || fail "uploads not writable"
+[ "$(wpcli eval 'echo (int) wp_is_file_mod_allowed("smoke"), (int) DISALLOW_FILE_EDIT, (int) AUTOMATIC_UPDATER_DISABLED;')" = 011 ] \
+    || fail "file mods / file editor / auto-updates not disabled"
 restart() {
     docker restart "$WP" >/dev/null
     for _ in $(seq 1 30); do in_wp "curl -sf -o /dev/null $WPURL/wp-login.php?action=postpass" 2>/dev/null && return; sleep 1; done
     fail "no response after restart"
 }
-setver 6.9.4; restart
-[ "$(getver)" = "$ver" ] || fail "core not upgraded on restart: $(getver) (image $ver)"
-# no grep -q: it exits on the first match, docker logs gets SIGPIPE and pipefail fails the check
-docker logs "$WP" 2>&1 | grep "from 6.9.4 to $ver" >/dev/null || fail "no upgrade log line"
-setver 99.0; restart
-[ "$(getver)" = 99.0 ] || fail "newer docroot core was downgraded"
-setver "$ver"; restart
-ok "core 6.9.4 -> $ver on restart; newer docroot core left alone"
+want=$(wpcli option get db_version)
+wpcli option update db_version 1 >/dev/null; restart
+[ "$(wpcli option get db_version)" = "$want" ] || fail "database schema not upgraded on start"
+ok "nothing outside uploads writable, file mods + auto-updates off, update-db on start"
+
+echo "==> no salts: refuses to run"
+docker run -d --name "$WPN" --network "$NET" --user 33:33 --read-only --tmpfs /tmp:rw,exec,mode=1777 --cap-drop ALL \
+    -e APACHE_PORT=8080 -e WORDPRESS_DB_HOST="$DB" -e WORDPRESS_DB_USER=wp -e WORDPRESS_DB_PASSWORD=wp -e WORDPRESS_DB_NAME=wp \
+    "$IMAGE" >/dev/null
+c=000
+for _ in $(seq 1 30); do
+    c=$(docker exec "$WPN" curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ 2>/dev/null) || c=000
+    [ "$c" != 000 ] && break
+    sleep 1
+done
+[ "$c" = 503 ] || fail "without salts / returned $c, expected 503"
+docker logs "$WPN" 2>&1 | grep "WORDPRESS_AUTH_KEY is missing" >/dev/null || fail "no log line for the missing salts"
+docker rm -f "$WPN" >/dev/null
+ok "503 and a log line without salts"
 
 echo "==> Keycloak realm, client (platform layout), users"
 for _ in $(seq 1 90); do in_wp "curl -sf -o /dev/null $KC_INT/realms/master" && break; sleep 2; done
@@ -240,7 +264,7 @@ pw='echo has_filter("authenticate","wp_authenticate_username_password") ? "on" :
 ok "password login follows OIDC_CLIENT_ID"
 
 echo "==> classic mode (plain docker run): root master on :80, www-data workers, OIDC redirect"
-docker run -d --name "$WP80" --network "$NET" \
+docker run -d --name "$WP80" --network "$NET" "${SALTS[@]}" \
     -e WORDPRESS_DB_HOST="$DB" -e WORDPRESS_DB_USER=wp -e WORDPRESS_DB_PASSWORD=wp -e WORDPRESS_DB_NAME=wp \
     -e OIDC_CLIENT_ID=wp -e OIDC_ENDPOINT_LOGIN="$KC_PUB/realms/smoke/protocol/openid-connect/auth" "$IMAGE" >/dev/null
 loc=
@@ -255,42 +279,25 @@ done
     || fail "port-80 mode: workers not www-data"
 ok "root master, www-data workers, wp-login -> Keycloak"
 
-echo "==> root mode with minimal capabilities: core upgrade over www-data-owned 0600 files survives first boot"
-# Regression: without CAP_FOWNER tar could not chmod such a
-# file, exited 2, the container died and the restart skipped update-db. Same
-# populated docroot: a second container on WP80's volume.
-docker exec "$WP80" sh -c "sed -i \"s/^\\\$wp_version = .*/\\\$wp_version = '6.9.4';/\" wp-includes/version.php \
-    && chown 33:33 wp-includes/class-wp.php && chmod 600 wp-includes/class-wp.php"
-docker stop "$WP80" >/dev/null
-docker run -d --name "$WPC" --network "$NET" --volumes-from "$WP80" --cap-drop ALL \
-    --cap-add CHOWN --cap-add SETUID --cap-add SETGID --cap-add NET_BIND_SERVICE --cap-add DAC_OVERRIDE \
-    -e WORDPRESS_DB_HOST="$DB" -e WORDPRESS_DB_USER=wp -e WORDPRESS_DB_PASSWORD=wp -e WORDPRESS_DB_NAME=wp \
-    -e OIDC_CLIENT_ID=wp -e OIDC_ENDPOINT_LOGIN="$KC_PUB/realms/smoke/protocol/openid-connect/auth" "$IMAGE" >/dev/null
-for _ in $(seq 1 60); do docker exec "$WPC" curl -sf -o /dev/null http://localhost/wp-login.php?action=postpass 2>/dev/null && break; sleep 2; done
-[ "$(docker inspect -f '{{.State.Running}}' "$WPC")" = true ] || fail "minimal caps: container died on core upgrade"
-[ "$(docker exec "$WPC" php -r 'include "/var/www/html/wp-includes/version.php"; echo $wp_version;')" = "$ver" ] || fail "minimal caps: core not upgraded"
-docker logs "$WPC" 2>&1 | grep -E "WordPress database (upgraded successfully|already at latest)" >/dev/null \
-    || { docker logs "$WPC" 2>&1 | grep -vE '^tar: |^\s*$' | head -20; fail "minimal caps: update-db did not run"; }
-ok "core upgrade + update-db with minimal capabilities"
-
 echo "==> meta description"
-docker exec "$WPC" wp option update blogdescription "Smoke tagline" --allow-root --path=/var/www/html >/dev/null
-head=$(docker exec "$WPC" curl -s -H "Host: ${WPURL#http://}" http://localhost/)
+docker exec "$WP80" wp option update blogdescription "Smoke tagline" --allow-root --path=/var/www/html >/dev/null
+head=$(docker exec "$WP80" curl -s -H "Host: ${WPURL#http://}" http://localhost/)
 grep -q '<meta name="description" content="Smoke tagline">' <<<"$head" \
     || { grep -oE '<title>[^<]*|<meta [^>]*>' <<<"$head" | head; echo "${head:0:300}"; fail "no meta description from tagline"; }
 grep -q '<meta property="og:description" content="Smoke tagline">' <<<"$head" || fail "no og:description"
 ok "meta description + og tags"
 
-echo "==> first start on a Kubernetes-style volume (root-owned, group 33): no crash"
+echo "==> Kubernetes-style uploads volume (root-owned, group 33): first start, uploads writable"
 WPF=$P-wpfresh
 docker rm -f "$WPF" >/dev/null 2>&1 || true
-docker run -d --name "$WPF" --network "$NET" --user 33:33 --read-only --cap-drop ALL \
-    --tmpfs /tmp:rw,exec,mode=1777 --tmpfs /var/www/html:rw,uid=0,gid=33,mode=2775 -e APACHE_PORT=8080 \
+docker run -d --name "$WPF" --network "$NET" --user 33:33 --read-only --cap-drop ALL "${SALTS[@]}" \
+    --tmpfs /tmp:rw,exec,mode=1777 --tmpfs /var/www/html/wp-content/uploads:rw,uid=0,gid=33,mode=2775 -e APACHE_PORT=8080 \
     -e WORDPRESS_DB_HOST="$DB" -e WORDPRESS_DB_USER=wp -e WORDPRESS_DB_PASSWORD=wp -e WORDPRESS_DB_NAME=wp "$IMAGE" >/dev/null
 for _ in $(seq 1 30); do docker exec "$WPF" curl -sf -o /dev/null http://localhost:8080/wp-login.php?action=postpass 2>/dev/null && break; sleep 2; done
 [ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$WPF")" = "true 0" ] || { docker logs --tail 20 "$WPF" >&2; fail "first start on a root-owned volume crashed"; }
-docker exec "$WPF" test -f /var/www/html/wp-includes/version.php -a -f /var/www/html/wp-config.php || fail "fresh volume not populated"
+docker exec "$WPF" sh -c 'mkdir -p /var/www/html/wp-content/uploads/2026/10 && touch /var/www/html/wp-content/uploads/2026/10/a.jpg' \
+    || fail "uploads on a root-owned group-33 volume not writable"
 docker rm -f "$WPF" >/dev/null
-ok "fresh root-owned volume populated as uid 33, first start survives"
+ok "root-owned group-33 uploads volume: starts, uploads writable as uid 33"
 
 echo "PASS: $IMAGE"
