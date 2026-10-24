@@ -13,13 +13,23 @@ Fork it, add your theme, push: CI builds, tests and publishes the image.
 **Image** (`Dockerfile`), based on the official `wordpress:<ver>-php8.5-apache`,
 pinned by digest:
 
+- **Immutable docroot**: core, plugins, themes, mu-plugins, translations and
+  `wp-config.php` are baked into `/usr/src/wordpress` (the docroot), owned by
+  root and read-only
+  for PHP. Only `wp-content/uploads` is writable (the volume). WordPress cannot
+  install or update code at runtime (`DISALLOW_FILE_MODS`, auto-updates off);
+  a new version is a new image, so the image you scan is the code that runs.
+- Configuration from env only (upstream `wp-config-docker.php`); the eight
+  `WORDPRESS_*` salts are required, without them every request gets a 503.
 - Runs as `www-data` (uid 33) on a read-only root filesystem with every
-  capability dropped (`APACHE_PORT=8080`, writable `/tmp` and `/var/www/html`).
-  Plain `docker run` (root master on port 80) still works.
+  capability dropped (`APACHE_PORT=8080`, writable `/tmp` and
+  `wp-content/uploads`). Plain `docker run` (root master on port 80) still works.
 - Plugins pinned in `composer.json`/`composer.lock` (wpackagist):
-  OpenID Connect Generic, Redirection, Lightbox with PhotoSwipe, Cache Enabler
-  (inactive until you activate it). WordPress MCP Adapter from its release zip,
-  checksummed.
+  OpenID Connect Generic, Redirection, Lightbox with PhotoSwipe. WordPress MCP
+  Adapter from its release zip, checksummed. Page-cache plugins that write
+  drop-ins into `wp-content` do not fit a read-only docroot.
+- Translations: `--build-arg WP_LANGUAGES="sk_SK"` bakes the WordPress.org
+  translations for core and the bundled plugins/themes into the image.
 - mu-plugins in `wp-content/mu-plugins/`:
   - `oidc.php`: OIDC settings from `OIDC_*` env; Keycloak **client** roles
     (`admin`, `editor`, `author`, `contributor`, `subscriber`) map to WordPress
@@ -32,11 +42,11 @@ pinned by digest:
     no background auto-updates.
   - `meta-description.php`: `<meta name="description">` and Open Graph tags.
 - Apache: no version banner, security headers, 403 on `readme.html`,
-  `wp-config*`, `xmlrpc.php`, logs and any PHP inside `uploads/`; browser
-  caching for static assets; prefork sized for one small site per pod.
-- `wp-entrypoint.sh`: on every start, upgrades WordPress core in an existing
-  volume to the image version (never downgrades), runs `wp core update-db`
-  and syncs the bundled plugins/themes before Apache starts.
+  `wp-config*`, `xmlrpc.php`, logs and any PHP inside `uploads/`; no
+  `.htaccess` (rewrite rules in the server config); browser caching for static
+  assets; prefork sized for one small site per pod.
+- `wp-entrypoint.sh`: on every start runs `wp core update-db`, so the database
+  schema follows the image.
 - WP-CLI included; no compiler, composer, git or ghostscript in the image.
 
 **CI** (`.github/workflows/`):
@@ -47,7 +57,9 @@ pinned by digest:
 - `security.yml`: daily Trivy scan (HIGH/CRITICAL with a fix) and a
   wpvulnerability.net check of core, plugins and themes (`tests/wpvuln.py`).
 - Dependabot for composer, Docker base images and Actions, with a 7-day
-  cooldown. Every Action is pinned by SHA.
+  cooldown (none for the `wordpress` image and wordpress.org plugins, whose
+  releases are mostly security fixes). Every Action is pinned by SHA.
+- The image rebuilds daily, so base-image and Debian fixes land without a PR.
 
 **Kubernetes**: `component/wordpress/charts/wordpress` (Helm chart) and
 `component/wordpress/` (platform component). See [DEPLOY.md](DEPLOY.md).
@@ -59,7 +71,7 @@ Dockerfile, composer.json, composer.lock   image
 config/                                    Apache, PHP, entrypoint
 wp-content/mu-plugins/                     always-on code (OIDC, PKCE, hardening, meta)
 wp-content/themes/, wp-content/plugins/    your own theme/plugins (copied into the image)
-tests/smoke.sh                             image test: hardening, non-root, core upgrade, OIDC e2e
+tests/smoke.sh                             image test: hardening, non-root, immutable docroot, OIDC e2e
 tests/wpvuln.py                            WordPress vulnerability check
 compose.yaml, .env.example                 local run
 component/wordpress/                       platform component (+ Helm chart in charts/wordpress)
@@ -106,7 +118,8 @@ python3 tests/wpvuln.py                    # WordPress CVEs (stdlib only)
 ```
 
 The smoke test boots MariaDB and Keycloak and checks headers, blocked files,
-version leaks, non-root processes, core upgrade and downgrade protection, and
+version leaks, non-root processes, the immutable docroot (nothing but uploads
+writable, salts required, schema upgrade on start), and
 the full OIDC flow: login, PKCE, role mapping, a user of another client being
 refused, forged state, replayed code, logout.
 

@@ -51,9 +51,3 @@ function harden_mask_core_ver($src) {
 add_filter('style_loader_src', 'harden_mask_core_ver', 9999);
 add_filter('script_loader_src', 'harden_mask_core_ver', 9999);
 add_filter('x_redirect_by', '__return_false');
-
-// Safe defaults when wp-config.php does not set them (the chart does, but only
-// after first boot): no theme/plugin code editor, no background auto-updates
-// (the image owns core and bundled plugins).
-defined('DISALLOW_FILE_EDIT') || define('DISALLOW_FILE_EDIT', true);
-defined('AUTOMATIC_UPDATER_DISABLED') || define('AUTOMATIC_UPDATER_DISABLED', true);

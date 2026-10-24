@@ -43,11 +43,12 @@ services:
       WORDPRESS_DB_NAME: wordpress
       # Pick up code edits without a restart
       PHP_OPCACHE_VALIDATE_TIMESTAMPS: 1
+    # Code and wp-config.php are in the image; only uploads persist.
     volumes:
-      - wp:/var/www/html
+      - uploads:/usr/src/wordpress/wp-content/uploads
       # Theme development: edit in place
-      # - ./wp-content/themes/mytheme:/var/www/html/wp-content/themes/mytheme
+      # - ./wp-content/themes/mytheme:/usr/src/wordpress/wp-content/themes/mytheme
 
 volumes:
   db:
-  wp:
+  uploads:

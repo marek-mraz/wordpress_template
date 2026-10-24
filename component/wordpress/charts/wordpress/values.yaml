@@ -4,8 +4,8 @@ global:
 
 app:
   replicaCount: 1
-  # Theme / space-separated plugins to activate (installed from wordpress.org if
-  # the image does not ship them) on every start, via WP-CLI.
+  # Theme / space-separated plugins to activate on every start, via WP-CLI.
+  # They must ship in the image (nothing is installed at runtime).
   theme: ""
   plugins: "redirection lightbox-photoswipe"
   image:
@@ -18,10 +18,14 @@ app:
   busyboxImage: "busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
   # Extra /etc/hosts entries (e.g. hairpin NAT: the site's own domain -> ingress ClusterIP)
   hostAliases: []
-  # PVC for /var/www/html (core, plugins, uploads)
+  # PVC for wp-content/uploads, the only persistent data (code is in the image)
   storage: 5Gi
   # Empty = cluster default StorageClass
   storageClassName: ""
+  # Directory inside the PVC that holds the uploads. Empty for new sites;
+  # "wp-content/uploads" for a PVC that still holds a whole docroot (sites
+  # created before the immutable image).
+  storageSubPath: ""
   # Recreate: one ReadWriteOncePod volume cannot attach to two pods during a rollout
   deployStrategy: Recreate
   # Container securityContext. The pod runs as www-data (uid 33): Apache listens

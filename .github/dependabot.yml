@@ -5,18 +5,23 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
-    # supply-chain cooldown: only propose releases at least 7 days old
+    # supply-chain cooldown: only propose releases at least 7 days old, except
+    # wordpress.org plugins: their releases are mostly security fixes and an
+    # unpatched public site is exploited within days (wp2shell, 2026)
     cooldown:
       default-days: 7
+      exclude: ["wpackagist-plugin/*"]
 
   # 2. Check Dockerfiles (wordpress + composer base images)
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "daily"
-    # supply-chain cooldown: only propose releases at least 7 days old
+    # supply-chain cooldown: only propose releases at least 7 days old, except
+    # the official wordpress image (core + PHP security releases)
     cooldown:
       default-days: 7
+      exclude: ["wordpress"]
 
   # 3. Check GitHub Actions (pinned SHAs in .github/workflows)
   - package-ecosystem: "github-actions"

@@ -79,6 +79,9 @@
         "storageClassName": {
           "type": "string"
         },
+        "storageSubPath": {
+          "type": "string"
+        },
         "deployStrategy": {
           "type": "string",
           "enum": [
