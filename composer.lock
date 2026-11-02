@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "5d5b20e2ea4c9870e253efa74bdebd0a",
+    "content-hash": "243b4c12ecc853990ff2b3307d121690",
     "packages": [
         {
             "name": "composer/installers",
@@ -190,15 +190,15 @@
         },
         {
             "name": "wpackagist-plugin/lightbox-photoswipe",
-            "version": "5.13.0",
+            "version": "5.15.0",
             "source": {
                 "type": "svn",
                 "url": "https://plugins.svn.wordpress.org/lightbox-photoswipe/",
-                "reference": "tags/5.13.0"
+                "reference": "tags/5.15.0"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://downloads.wordpress.org/plugin/lightbox-photoswipe.5.13.0.zip"
+                "url": "https://downloads.wordpress.org/plugin/lightbox-photoswipe.5.15.0.zip"
             },
             "require": {
                 "composer/installers": "^1.0 || ^2.0"
