@@ -11,7 +11,7 @@ ADD --checksum=sha256:c8bc28f83d3c39beffa2add4f6becc0b1ae54097df433697d1dbe6520a
 RUN unzip -q /tmp/mcp.zip -d wp-content/plugins/
 
 # --- runtime
-FROM wordpress:7.1.3-php8.5-apache@sha256:574ea6f58239fba5fc95fe22e03683777259534498ab8e0ea3f6f176a9d620d1
+FROM wordpress:7.1.3-php8.5-apache@sha256:89e44e84974773a97b5ca5fa21b95377d372956fc9d7d1ad363e9fe062d5fe56
 
 # Security updates newer than the base image; drop the compiler toolchain the
 # php image keeps for docker-php-ext-install and ghostscript (only used for PDF
